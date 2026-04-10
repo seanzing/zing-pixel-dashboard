@@ -19,10 +19,18 @@ export default function DashboardPage() {
   const router = useRouter();
 
   async function fetchSites() {
-    const res = await fetch("/api/sites");
-    const data = await res.json();
-    setSites(data.sites ?? []);
-    setLoading(false);
+    try {
+      const res = await fetch("/api/sites", { cache: "no-store" });
+      const text = await res.text();
+      console.log("API response status:", res.status);
+      console.log("API response body:", text);
+      const data = JSON.parse(text);
+      setSites(data.sites ?? []);
+    } catch (err) {
+      console.error("fetchSites error:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
