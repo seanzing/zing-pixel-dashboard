@@ -40,6 +40,13 @@ export default function SiteEditorPage() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{
+    filename: string;
+    url: string;
+  } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   async function fetchSite() {
     const res = await fetch(`/api/sites/${siteId}`);
@@ -119,6 +126,33 @@ export default function SiteEditorPage() {
     setChatLoading(false);
   }
 
+  async function handleUpload() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setUploadResult(null);
+    setUploadError(null);
+
+    const fd = new FormData();
+    fd.append("file", uploadFile);
+
+    try {
+      const res = await fetch(`/api/sites/${siteId}/upload`, {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUploadError(data.error || "Upload failed");
+      } else {
+        setUploadResult({ filename: data.filename, url: data.url });
+        setUploadFile(null);
+      }
+    } catch {
+      setUploadError("Upload failed — check your connection");
+    }
+    setUploading(false);
+  }
+
   if (!site) {
     return (
       <div className="p-8">
@@ -183,6 +217,47 @@ export default function SiteEditorPage() {
               value={site.cta_text ?? ""}
               onChange={(v) => setSite({ ...site, cta_text: v })}
             />
+          </div>
+
+          {/* Images Upload */}
+          <div className="mt-6">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+              Images
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  setUploadFile(e.target.files?.[0] ?? null);
+                  setUploadResult(null);
+                  setUploadError(null);
+                }}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+              />
+              <button
+                onClick={handleUpload}
+                disabled={!uploadFile || uploading}
+                className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {uploading ? "Uploading..." : "Upload Image"}
+              </button>
+            </div>
+            {uploadResult && (
+              <div className="mt-2 bg-green-50 border border-green-200 rounded-md px-3 py-2 text-sm text-green-800">
+                <span>&#x2705; {uploadResult.filename} uploaded &mdash; </span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(uploadResult.url)}
+                  className="underline font-medium hover:text-green-900"
+                >
+                  copy URL
+                </button>
+                <span className="text-xs text-green-600"> to use in the AI chat</span>
+              </div>
+            )}
+            {uploadError && (
+              <p className="mt-2 text-sm text-red-600">{uploadError}</p>
+            )}
           </div>
 
           <button
