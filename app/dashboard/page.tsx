@@ -1,0 +1,258 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+
+interface Site {
+  id: string;
+  business_name: string;
+  status: string;
+  preview_url: string | null;
+  live_url: string | null;
+  updated_at: string;
+}
+
+export default function DashboardPage() {
+  const [sites, setSites] = useState<Site[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const router = useRouter();
+
+  async function fetchSites() {
+    const res = await fetch("/api/sites");
+    const data = await res.json();
+    setSites(data.sites ?? []);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    fetchSites();
+  }, []);
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
+        <button
+          onClick={() => setShowModal(true)}
+          className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors"
+        >
+          + Add Site
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-gray-500 text-sm">Loading...</p>
+      ) : sites.length === 0 ? (
+        <p className="text-gray-500 text-sm">
+          No sites yet. Add your first site.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {sites.map((site) => (
+            <div
+              key={site.id}
+              className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm"
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <h3 className="font-semibold text-lg text-zing-dark">
+                    {site.business_name}
+                  </h3>
+                  <p className="text-xs text-gray-400">{site.id}</p>
+                </div>
+                <span
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    site.status === "live"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {site.status === "live" ? "Live" : "Preview"}
+                </span>
+              </div>
+
+              {site.preview_url && (
+                <a
+                  href={site.preview_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-zing-teal hover:underline break-all"
+                >
+                  {site.preview_url}
+                </a>
+              )}
+
+              <p className="text-xs text-gray-400 mt-2">
+                Updated{" "}
+                {new Date(site.updated_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </p>
+
+              <button
+                onClick={() => router.push(`/dashboard/sites/${site.id}`)}
+                className="mt-3 w-full text-center bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-200 transition-colors"
+              >
+                Edit
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <AddSiteModal
+          onClose={() => setShowModal(false)}
+          onCreated={(id) => {
+            setShowModal(false);
+            router.push(`/dashboard/sites/${id}`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddSiteModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const [form, setForm] = useState({
+    id: "",
+    business_name: "",
+    owner_email: "",
+    phone: "",
+    address: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+
+    const res = await fetch("/api/sites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      setError(data.error || "Failed to create site");
+      setSaving(false);
+      return;
+    }
+
+    const data = await res.json();
+    onCreated(data.site.id);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 className="text-lg font-semibold text-zing-dark mb-4">
+          Add New Site
+        </h3>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Site ID (slug)
+            </label>
+            <input
+              type="text"
+              value={form.id}
+              onChange={(e) =>
+                setForm({ ...form, id: e.target.value.replace(/\s/g, "") })
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+              placeholder="e.g. mooreroofing"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Business Name
+            </label>
+            <input
+              type="text"
+              value={form.business_name}
+              onChange={(e) =>
+                setForm({ ...form, business_name: e.target.value })
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Owner Email
+            </label>
+            <input
+              type="email"
+              value={form.owner_email}
+              onChange={(e) =>
+                setForm({ ...form, owner_email: e.target.value })
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Phone
+            </label>
+            <input
+              type="text"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Address
+            </label>
+            <input
+              type="text"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+            />
+          </div>
+
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-zing-teal text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+            >
+              {saving ? "Creating..." : "Create Site"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
