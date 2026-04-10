@@ -28,25 +28,12 @@ export function createServerSupabaseClient() {
 }
 
 export function createServiceRoleClient() {
-  const cookieStore = cookies();
-  return createServerClient(
+  // Use direct supabase-js client (no SSR cookie wrapper) so service role key
+  // properly bypasses RLS without cookie context issues in API routes.
+  const { createClient } = require("@supabase/supabase-js");
+  return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: CookieEntry[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
-          } catch {
-            // Server Component context
-          }
-        },
-      },
-    }
+    { auth: { persistSession: false } }
   );
 }
