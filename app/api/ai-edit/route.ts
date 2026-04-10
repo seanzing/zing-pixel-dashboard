@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { processAiEdit } from "@/lib/ai";
-import { deployToPages } from "@/lib/cloudflare";
-import fs from "fs";
-import path from "path";
-
-const SITES_BASE_PATH = process.env.SITES_BASE_PATH!;
+import { getFile, writeFile } from "@/lib/github";
 
 export async function POST(request: Request) {
   const { siteId, message, chatHistory } = await request.json();
@@ -17,23 +13,27 @@ export async function POST(request: Request) {
     );
   }
 
-  const htmlPath = path.join(SITES_BASE_PATH, siteId, "index.html");
-
-  if (!fs.existsSync(htmlPath)) {
+  const file = await getFile(`${siteId}/index.html`);
+  if (!file) {
     return NextResponse.json(
-      { error: `HTML file not found at ${htmlPath}` },
+      { error: "Site files not found in GitHub" },
       { status: 404 }
     );
   }
 
-  const currentHtml = fs.readFileSync(htmlPath, "utf-8");
+  const currentHtml = file.content;
   const supabase = createServiceRoleClient();
 
   try {
     const result = await processAiEdit(currentHtml, message, chatHistory ?? []);
 
-    // Write updated HTML
-    fs.writeFileSync(htmlPath, result.html, "utf-8");
+    // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
+    await writeFile(
+      `${siteId}/index.html`,
+      result.html,
+      `edit(${siteId}): ${result.changes.slice(0, 72)}`,
+      file.sha
+    );
 
     // Save chat messages
     await supabase.from("chat_messages").insert([
@@ -41,24 +41,15 @@ export async function POST(request: Request) {
       { site_id: siteId, role: "assistant", content: result.changes },
     ]);
 
-    // Trigger preview deploy
-    let previewUrl = "";
-    try {
-      previewUrl = await deployToPages(siteId);
-      await supabase
-        .from("deployments")
-        .insert({ site_id: siteId, type: "preview", url: previewUrl, deployed_by: "ai-edit" });
-      await supabase
-        .from("sites")
-        .update({ preview_url: previewUrl, updated_at: new Date().toISOString() })
-        .eq("id", siteId);
-    } catch {
-      // Deploy failed — still return changes
-    }
+    // Update site timestamp
+    await supabase
+      .from("sites")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", siteId);
 
     return NextResponse.json({
       changes: result.changes,
-      previewUrl,
+      previewUrl: `https://${siteId}.pages.dev`,
     });
   } catch (err) {
     const errorMessage =

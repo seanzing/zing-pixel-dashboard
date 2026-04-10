@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { deployToPages } from "@/lib/cloudflare";
-import fs from "fs";
-import path from "path";
-
-const SITES_BASE_PATH = process.env.SITES_BASE_PATH!;
+import { getFile, writeFile } from "@/lib/github";
 
 export async function GET(
   _request: Request,
@@ -94,10 +90,10 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Apply changes to HTML file
-  const htmlPath = path.join(SITES_BASE_PATH, siteId, "index.html");
-  if (fs.existsSync(htmlPath)) {
-    let html = fs.readFileSync(htmlPath, "utf-8");
+  // Apply changes to HTML file via GitHub
+  const file = await getFile(`${siteId}/index.html`);
+  if (file) {
+    let html = file.content;
 
     // Phone replacement
     if (body.phone && currentSite.phone && body.phone !== currentSite.phone) {
@@ -143,20 +139,16 @@ export async function PATCH(
       html = html.replaceAll(currentSite.address, body.address);
     }
 
-    fs.writeFileSync(htmlPath, html, "utf-8");
-
-    // Trigger preview deploy
+    // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
     try {
-      const url = await deployToPages(siteId);
-      await supabase
-        .from("deployments")
-        .insert({ site_id: siteId, type: "preview", url, deployed_by: "system" });
-      await supabase
-        .from("sites")
-        .update({ preview_url: url })
-        .eq("id", siteId);
+      await writeFile(
+        `${siteId}/index.html`,
+        html,
+        `update(${siteId}): structured fields`,
+        file.sha
+      );
     } catch {
-      // Deploy failed — non-critical for save
+      // GitHub write failed — non-critical for save
     }
   }
 
