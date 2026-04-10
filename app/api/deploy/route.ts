@@ -25,20 +25,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Re-commit the current file to trigger a Cloudflare Pages deploy via GitHub Actions
-    const file = await getFile(`${siteId}/index.html`);
-    if (!file) {
-      return NextResponse.json(
-        { error: "Site files not found in GitHub" },
-        { status: 404 }
-      );
-    }
-
+    // Write a timestamp file to guarantee git diff sees a change and Actions triggers
+    const metaPath = `${siteId}/_pixel.json`;
+    const metaContent = JSON.stringify({ deployedAt: new Date().toISOString(), type }, null, 2);
+    const existingMeta = await getFile(metaPath);
     await writeFile(
-      `${siteId}/index.html`,
-      file.content,
+      metaPath,
+      metaContent,
       `${type === "production" ? "deploy" : "preview"}(${siteId}): manual deploy`,
-      file.sha
+      existingMeta?.sha
     );
 
     const url = `https://${siteId}.pages.dev`;
