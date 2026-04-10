@@ -16,6 +16,8 @@ export default function DashboardPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const router = useRouter();
 
   async function fetchSites() {
@@ -37,10 +39,41 @@ export default function DashboardPage() {
     fetchSites();
   }, []);
 
+  async function handleArchive(siteId: string) {
+    await fetch(`/api/sites/${siteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "archived" }),
+    });
+    setArchivingId(null);
+    await fetchSites();
+  }
+
+  async function handleUnarchive(siteId: string) {
+    await fetch(`/api/sites/${siteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "preview" }),
+    });
+    await fetchSites();
+  }
+
+  const visibleSites = showArchived
+    ? sites
+    : sites.filter((s) => s.status !== "archived");
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
+          <button
+            onClick={() => setShowArchived(!showArchived)}
+            className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            {showArchived ? "Hide archived" : "Show archived"}
+          </button>
+        </div>
         <button
           onClick={() => setShowModal(true)}
           className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors"
@@ -51,63 +84,109 @@ export default function DashboardPage() {
 
       {loading ? (
         <p className="text-gray-500 text-sm">Loading...</p>
-      ) : sites.length === 0 ? (
+      ) : visibleSites.length === 0 ? (
         <p className="text-gray-500 text-sm">
           No sites yet. Add your first site.
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sites.map((site) => (
-            <div
-              key={site.id}
-              className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm"
-            >
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <h3 className="font-semibold text-lg text-zing-dark">
-                    {site.business_name}
-                  </h3>
-                  <p className="text-xs text-gray-400">{site.id}</p>
-                </div>
-                <span
-                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                    site.status === "live"
-                      ? "bg-green-100 text-green-700"
-                      : "bg-amber-100 text-amber-700"
-                  }`}
-                >
-                  {site.status === "live" ? "Live" : "Preview"}
-                </span>
-              </div>
-
-              {site.preview_url && (
-                <a
-                  href={site.preview_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-zing-teal hover:underline break-all"
-                >
-                  {site.preview_url}
-                </a>
-              )}
-
-              <p className="text-xs text-gray-400 mt-2">
-                Updated{" "}
-                {new Date(site.updated_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </p>
-
-              <button
-                onClick={() => router.push(`/dashboard/sites/${site.id}`)}
-                className="mt-3 w-full text-center bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-200 transition-colors"
+          {visibleSites.map((site) => {
+            const isArchived = site.status === "archived";
+            return (
+              <div
+                key={site.id}
+                className={`bg-white rounded-lg border border-gray-200 p-5 shadow-sm group relative ${
+                  isArchived ? "opacity-50" : ""
+                }`}
               >
-                Edit
-              </button>
-            </div>
-          ))}
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="font-semibold text-lg text-zing-dark">
+                      {site.business_name}
+                    </h3>
+                    <p className="text-xs text-gray-400">{site.id}</p>
+                  </div>
+                  <span
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      isArchived
+                        ? "bg-gray-100 text-gray-500"
+                        : site.status === "live"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {isArchived
+                      ? "Archived"
+                      : site.status === "live"
+                      ? "Live"
+                      : "Preview"}
+                  </span>
+                </div>
+
+                {site.preview_url && (
+                  <a
+                    href={site.preview_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-zing-teal hover:underline break-all"
+                  >
+                    {site.preview_url}
+                  </a>
+                )}
+
+                <p className="text-xs text-gray-400 mt-2">
+                  Updated{" "}
+                  {new Date(site.updated_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => router.push(`/dashboard/sites/${site.id}`)}
+                    className="flex-1 text-center bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-200 transition-colors"
+                  >
+                    Edit
+                  </button>
+
+                  {isArchived ? (
+                    <button
+                      onClick={() => handleUnarchive(site.id)}
+                      className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded hover:bg-gray-100 transition-colors"
+                    >
+                      Unarchive
+                    </button>
+                  ) : archivingId === site.id ? (
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-500">Archive?</span>
+                      <button
+                        onClick={() => handleArchive(site.id)}
+                        className="text-xs text-red-600 hover:text-red-800 px-1"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        onClick={() => setArchivingId(null)}
+                        className="text-xs text-gray-400 hover:text-gray-600 px-1"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setArchivingId(site.id)}
+                      className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all"
+                      title="Archive site"
+                    >
+                      Archive
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

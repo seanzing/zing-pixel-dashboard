@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 interface Site {
   id: string;
@@ -32,7 +32,10 @@ interface ChatMsg {
 
 export default function SiteEditorPage() {
   const { siteId } = useParams<{ siteId: string }>();
+  const router = useRouter();
   const [site, setSite] = useState<Site | null>(null);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [saving, setSaving] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -124,6 +127,16 @@ export default function SiteEditorPage() {
       ]);
     }
     setChatLoading(false);
+  }
+
+  async function handleArchive() {
+    setArchiving(true);
+    await fetch(`/api/sites/${siteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "archived" }),
+    });
+    router.push("/dashboard");
   }
 
   async function handleUpload() {
@@ -267,6 +280,19 @@ export default function SiteEditorPage() {
           >
             {saving ? "Saving..." : "Save Changes"}
           </button>
+
+          {/* Archive section */}
+          <div className="mt-10 pt-6 border-t border-gray-200">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+              Danger Zone
+            </p>
+            <button
+              onClick={() => setShowArchiveModal(true)}
+              className="w-full text-center border border-gray-300 text-gray-500 px-3 py-2 rounded-md text-sm hover:bg-gray-50 transition-colors"
+            >
+              Archive Site
+            </button>
+          </div>
         </div>
 
         {/* Right: AI Chat */}
@@ -414,6 +440,36 @@ export default function SiteEditorPage() {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Archive confirmation modal */}
+      {showArchiveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
+            <h3 className="text-lg font-semibold text-zing-dark mb-2">
+              Archive {site.business_name}?
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              The site will be hidden from Pixel. Files and deployment are not
+              affected.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowArchiveModal(false)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleArchive}
+                disabled={archiving}
+                className="flex-1 bg-gray-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                {archiving ? "Archiving..." : "Archive"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -69,6 +69,7 @@ export async function PATCH(
     "hero_headline",
     "hero_subheadline",
     "cta_text",
+    "status",
   ];
 
   for (const key of fieldKeys) {
