@@ -29,7 +29,7 @@ export async function processAiEdit(
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5-20250929",
-    max_tokens: 16000,
+    max_tokens: 64000,
     system: SYSTEM_PROMPT,
     messages,
   });
