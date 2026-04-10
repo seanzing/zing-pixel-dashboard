@@ -37,11 +37,19 @@ export async function processAiEdit(
   const text =
     response.content[0].type === "text" ? response.content[0].text : "";
 
-  // Extract JSON from response (handle markdown code blocks)
-  let jsonStr = text;
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim();
+  // Strip markdown code fences if present
+  let jsonStr = text.trim();
+  if (jsonStr.startsWith("```")) {
+    jsonStr = jsonStr
+      .replace(/^```(?:json)?\s*/i, "")  // strip opening fence
+      .replace(/\s*```\s*$/, "");         // strip closing fence
+  }
+
+  // Find the outermost JSON object in case there's leading/trailing text
+  const firstBrace = jsonStr.indexOf("{");
+  const lastBrace = jsonStr.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
   }
 
   const parsed = JSON.parse(jsonStr);

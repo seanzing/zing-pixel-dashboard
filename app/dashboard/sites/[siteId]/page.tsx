@@ -392,11 +392,18 @@ export default function SiteEditorPage() {
             <span className="text-xs text-gray-500">Deploying...</span>
           )}
           <button
+            onClick={() => handleDeploy("preview")}
+            disabled={deploying}
+            className="bg-gray-100 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+          >
+            Deploy Preview
+          </button>
+          <button
             onClick={() => handleDeploy("production")}
             disabled={deploying}
             className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
           >
-            Push to Production
+            🚀 Push to Production
           </button>
         </div>
       </div>
