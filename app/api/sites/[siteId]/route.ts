@@ -133,12 +133,28 @@ export async function PATCH(
     }
 
     // Address replacement
-    if (
-      body.address &&
-      currentSite.address &&
-      body.address !== currentSite.address
-    ) {
+    if (body.address && currentSite.address && body.address !== currentSite.address) {
       html = html.replaceAll(currentSite.address, body.address);
+    }
+
+    // Hero headline replacement
+    if (body.hero_headline && currentSite.hero_headline && body.hero_headline !== currentSite.hero_headline) {
+      html = html.replaceAll(currentSite.hero_headline, body.hero_headline);
+    }
+
+    // Hero subheadline replacement
+    if (body.hero_subheadline && currentSite.hero_subheadline && body.hero_subheadline !== currentSite.hero_subheadline) {
+      html = html.replaceAll(currentSite.hero_subheadline, body.hero_subheadline);
+    }
+
+    // CTA text replacement
+    if (body.cta_text && currentSite.cta_text && body.cta_text !== currentSite.cta_text) {
+      html = html.replaceAll(currentSite.cta_text, body.cta_text);
+    }
+
+    // Hours replacement
+    if (body.hours && currentSite.hours && body.hours !== currentSite.hours) {
+      html = html.replaceAll(currentSite.hours, body.hours);
     }
 
     updatedHtml = html;

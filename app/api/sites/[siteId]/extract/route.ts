@@ -33,6 +33,18 @@ export async function GET(
 
   try {
     const extracted = JSON.parse(jsonStr);
+
+    // Persist extracted values to Supabase so PATCH handler has old values for find/replace
+    const { createServiceRoleClient } = await import("@/lib/supabase/server");
+    const supabase = createServiceRoleClient();
+    const updateFields: Record<string, string> = {};
+    for (const key of ["business_name","phone","email","address","hours","hero_headline","hero_subheadline","cta_text"]) {
+      if (extracted[key]) updateFields[key] = extracted[key];
+    }
+    if (Object.keys(updateFields).length > 0) {
+      await supabase.from("sites").update(updateFields).eq("id", siteId);
+    }
+
     return NextResponse.json({ extracted });
   } catch {
     return NextResponse.json({ error: "Failed to parse extraction" }, { status: 500 });
