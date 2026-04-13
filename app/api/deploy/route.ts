@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createServerSupabaseClient } from "@/lib/supabase/server";
 import { getFile, writeFile } from "@/lib/github";
 
 export async function POST(request: Request) {
@@ -13,6 +13,11 @@ export async function POST(request: Request) {
   }
 
   const supabase = createServiceRoleClient();
+
+  // Get the current user for attribution
+  const userClient = createServerSupabaseClient();
+  const { data: { user } } = await userClient.auth.getUser();
+  const deployedBy = user?.email ?? "unknown";
 
   const { data: site } = await supabase
     .from("sites")
@@ -51,7 +56,7 @@ export async function POST(request: Request) {
       site_id: siteId,
       type,
       url,
-      deployed_by: "manual",
+      deployed_by: deployedBy,
     });
 
     // Update site URL

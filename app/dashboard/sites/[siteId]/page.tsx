@@ -23,6 +23,7 @@ interface Deployment {
   type: string;
   url: string;
   deployed_at: string;
+  deployed_by: string | null;
 }
 
 interface ChatMsg {
@@ -52,6 +53,24 @@ export default function SiteEditorPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [extracting, setExtracting] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin
+  function buildBlobPreview(html: string, siteId: string): string {
+    const base = `<base href="https://${siteId}.pages.dev/">`;
+    return html.includes("<head>")
+      ? html.replace("<head>", `<head>${base}`)
+      : base + html;
+  }
+
+  function revokeBlobUrl() {
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      setBlobUrl(null);
+    }
+  }
+
+  useEffect(() => () => revokeBlobUrl(), []); // cleanup on unmount
 
   // Right panel tab: "chat" | "preview"
   const [rightTab, setRightTab] = useState<"chat" | "preview">("chat");
@@ -81,7 +100,9 @@ export default function SiteEditorPage() {
         if (data.status === "completed") {
           stopPolling();
           setDeployState(data.conclusion === "success" ? "success" : "failure");
-          setPreviewKey((k) => k + 1); // reload iframe
+          // Switch from blob preview back to the live CF Pages URL
+          revokeBlobUrl();
+          setPreviewKey((k) => k + 1);
           // Reset success badge after 8s
           setTimeout(() => setDeployState("idle"), 8000);
         } else {
@@ -194,6 +215,16 @@ export default function SiteEditorPage() {
         ...prev,
         { role: "assistant", content: data.changes },
       ]);
+      // Instant preview — no deploy needed
+      if (data.html) {
+        revokeBlobUrl();
+        const preview = buildBlobPreview(data.html, siteId);
+        const blob = new Blob([preview], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        setBlobUrl(url);
+        setRightTab("preview");
+        setPreviewKey((k) => k + 1);
+      }
       await fetchSite();
     } else if (data.error) {
       setChatMessages((prev) => [
@@ -478,27 +509,51 @@ export default function SiteEditorPage() {
               {site.preview_url ? (
                 <>
                   <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
-                    <span className="text-xs text-gray-400 truncate">{site.preview_url}</span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {blobUrl ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                          ⚡ Unsaved preview
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+                          ✓ Deployed
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-400 truncate">
+                        {blobUrl ? "Changes not yet deployed to Cloudflare" : site.preview_url}
+                      </span>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {blobUrl && (
+                        <button
+                          onClick={revokeBlobUrl}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                          title="Switch back to the deployed version"
+                        >
+                          Show deployed
+                        </button>
+                      )}
                       <button
                         onClick={() => setPreviewKey((k) => k + 1)}
                         className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
                       >
                         ↻ Refresh
                       </button>
-                      <a
-                        href={site.preview_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-zing-teal hover:underline px-2 py-1"
-                      >
-                        Open ↗
-                      </a>
+                      {!blobUrl && site.preview_url && (
+                        <a
+                          href={site.preview_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-zing-teal hover:underline px-2 py-1"
+                        >
+                          Open ↗
+                        </a>
+                      )}
                     </div>
                   </div>
                   <iframe
                     key={previewKey}
-                    src={site.preview_url}
+                    src={blobUrl ?? site.preview_url ?? ""}
                     className="flex-1 w-full border-0"
                     title="Site Preview"
                   />
@@ -622,6 +677,11 @@ export default function SiteEditorPage() {
                     minute: "2-digit",
                   })}
                 </span>
+                {dep.deployed_by && (
+                  <span className="text-gray-400">
+                    by {dep.deployed_by.split("@")[0]}
+                  </span>
+                )}
               </div>
             ))}
           </div>

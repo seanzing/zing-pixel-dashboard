@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createServerSupabaseClient } from "@/lib/supabase/server";
 import { processAiEdit } from "@/lib/ai";
 import { getFile, writeFile } from "@/lib/github";
 
@@ -23,6 +23,9 @@ export async function POST(request: Request) {
 
   const currentHtml = file.content;
   const supabase = createServiceRoleClient();
+  const userClient = createServerSupabaseClient();
+  const { data: { user } } = await userClient.auth.getUser();
+  const deployedBy = user?.email ?? "unknown";
 
   try {
     const result = await processAiEdit(currentHtml, message, chatHistory ?? []);
@@ -49,6 +52,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       changes: result.changes,
+      html: result.html,
       previewUrl: `https://${siteId}.pages.dev`,
     });
   } catch (err) {
