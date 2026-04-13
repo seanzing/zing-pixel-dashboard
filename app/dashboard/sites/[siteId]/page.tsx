@@ -51,6 +51,8 @@ export default function SiteEditorPage() {
   } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const [extracting, setExtracting] = useState(false);
+
   // Right panel tab: "chat" | "preview"
   const [rightTab, setRightTab] = useState<"chat" | "preview">("chat");
   const [previewKey, setPreviewKey] = useState(0); // increment to force iframe reload
@@ -100,6 +102,34 @@ export default function SiteEditorPage() {
     setDeployments(data.deployments ?? []);
     if (data.chatMessages) {
       setChatMessages(data.chatMessages);
+    }
+  }
+
+  async function handleExtract() {
+    if (!site) return;
+    setExtracting(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/extract`);
+      const data = await res.json();
+      if (data.extracted) {
+        setSite((prev) => {
+          if (!prev) return prev;
+          const e = data.extracted;
+          return {
+            ...prev,
+            business_name: e.business_name ?? prev.business_name,
+            phone: e.phone ?? prev.phone,
+            email: e.email ?? prev.email,
+            address: e.address ?? prev.address,
+            hours: e.hours ?? prev.hours,
+            hero_headline: e.hero_headline ?? prev.hero_headline,
+            hero_subheadline: e.hero_subheadline ?? prev.hero_subheadline,
+            cta_text: e.cta_text ?? prev.cta_text,
+          };
+        });
+      }
+    } finally {
+      setExtracting(false);
     }
   }
 
@@ -223,10 +253,27 @@ export default function SiteEditorPage() {
     <div className="flex flex-col h-screen">
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Structured Fields */}
-        <div className="w-2/5 border-r border-gray-200 overflow-y-auto p-6 bg-white">
-          <h2 className="text-lg font-semibold text-zing-dark mb-4">
-            Site Details
-          </h2>
+        <div className="w-72 shrink-0 border-r border-gray-200 overflow-y-auto p-5 bg-white">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-semibold text-zing-dark">Site Details</h2>
+            <button
+              onClick={handleExtract}
+              disabled={extracting}
+              title="Pull current values from the live website HTML"
+              className="text-xs text-zing-teal hover:text-zing-dark disabled:opacity-50 flex items-center gap-1 transition-colors"
+            >
+              {extracting ? (
+                <span>Reading...</span>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Sync from site
+                </>
+              )}
+            </button>
+          </div>
 
           <div className="space-y-3">
             <Field
@@ -341,7 +388,7 @@ export default function SiteEditorPage() {
         </div>
 
         {/* Right: Tabbed Chat / Preview */}
-        <div className="w-3/5 flex flex-col bg-gray-50">
+        <div className="flex-1 flex flex-col bg-gray-50">
           {/* Tab bar */}
           <div className="flex border-b border-gray-200 bg-white">
             <button
