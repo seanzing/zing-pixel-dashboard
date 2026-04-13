@@ -132,9 +132,22 @@ export async function PATCH(
       html = html.replaceAll(currentSite.business_name, body.business_name);
     }
 
-    // Address replacement
+    // Address replacement — try exact match first, then handle <br> split format
     if (body.address && currentSite.address && body.address !== currentSite.address) {
-      html = html.replaceAll(currentSite.address, body.address);
+      if (html.includes(currentSite.address)) {
+        html = html.replaceAll(currentSite.address, body.address);
+      } else {
+        // Address may be split across a <br> tag: "Street\nCity" → "Street<br>City"
+        const [oldStreet, oldCity] = currentSite.address.split("\n");
+        const [newStreet, newCity] = body.address.split("\n");
+        if (oldStreet && oldCity) {
+          const oldBr = `${oldStreet}<br>${oldCity}`;
+          const newBr = `${newStreet}<br>${newCity ?? ""}`;
+          html = html.replaceAll(oldBr, newBr);
+          // Also try with <br/> variant
+          html = html.replaceAll(`${oldStreet}<br/>${oldCity}`, newBr);
+        }
+      }
     }
 
     // Hero headline replacement
