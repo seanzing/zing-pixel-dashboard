@@ -166,11 +166,20 @@ export default function SiteEditorPage() {
   async function handleSave() {
     if (!site) return;
     setSaving(true);
-    await fetch(`/api/sites/${siteId}`, {
+    const res = await fetch(`/api/sites/${siteId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(site),
     });
+    const data = await res.json();
+    if (data.html) {
+      revokeBlobUrl();
+      const preview = buildBlobPreview(data.html, siteId);
+      const blob = new Blob([preview], { type: "text/html" });
+      setBlobUrl(URL.createObjectURL(blob));
+      setRightTab("preview");
+      setPreviewKey((k) => k + 1);
+    }
     await fetchSite();
     setSaving(false);
   }

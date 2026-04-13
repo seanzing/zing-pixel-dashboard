@@ -93,6 +93,7 @@ export async function PATCH(
 
   // Apply changes to HTML file via GitHub
   const file = await getFile(`${siteId}/index.html`);
+  let updatedHtml: string | null = null;
   if (file) {
     let html = file.content;
 
@@ -140,6 +141,8 @@ export async function PATCH(
       html = html.replaceAll(currentSite.address, body.address);
     }
 
+    updatedHtml = html;
+
     // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
     try {
       await writeFile(
@@ -153,7 +156,7 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ site });
+  return NextResponse.json({ site, html: updatedHtml });
 }
 
 export async function DELETE(
