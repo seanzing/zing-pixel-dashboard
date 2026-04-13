@@ -25,13 +25,13 @@ export async function getFile(
   return { content, sha: data.sha };
 }
 
-/** Write (create or update) a file in the repo. Commits with the given message. */
+/** Write (create or update) a file in the repo. Returns the commit SHA. */
 export async function writeFile(
   path: string,
   content: string,
   message: string,
   sha?: string
-): Promise<void> {
+): Promise<string> {
   const body: Record<string, string> = {
     message,
     content: Buffer.from(content).toString("base64"),
@@ -45,6 +45,8 @@ export async function writeFile(
   });
 
   if (!res.ok) throw new Error(`GitHub PUT ${path}: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.commit?.sha ?? "";
 }
 
 /** Check if a directory exists by listing its contents. */

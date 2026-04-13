@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     const metaPath = `${siteId}/_pixel.json`;
     const metaContent = JSON.stringify({ deployedAt: new Date().toISOString(), type }, null, 2);
     const existingMeta = await getFile(metaPath);
-    await writeFile(
+    const commitSha = await writeFile(
       metaPath,
       metaContent,
       `${type === "production" ? "deploy" : "preview"}(${siteId}): manual deploy`,
@@ -63,6 +63,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       url,
+      commitSha,
       message: "Deploy triggered via GitHub commit. Cloudflare Pages will update in ~30s.",
     });
   } catch (err) {

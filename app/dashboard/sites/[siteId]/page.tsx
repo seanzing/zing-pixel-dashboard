@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 interface Site {
@@ -51,6 +51,48 @@ export default function SiteEditorPage() {
   } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // Right panel tab: "chat" | "preview"
+  const [rightTab, setRightTab] = useState<"chat" | "preview">("chat");
+  const [previewKey, setPreviewKey] = useState(0); // increment to force iframe reload
+
+  // Deploy status polling
+  type DeployState = "idle" | "queued" | "in_progress" | "success" | "failure";
+  const [deployState, setDeployState] = useState<DeployState>("idle");
+  const deployPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (deployPollRef.current) {
+      clearInterval(deployPollRef.current);
+      deployPollRef.current = null;
+    }
+  }, []);
+
+  const pollDeployStatus = useCallback((sha: string) => {
+    stopPolling();
+    setDeployState("queued");
+
+    deployPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/deploy-status?sha=${sha}`);
+        const data = await res.json();
+
+        if (data.status === "completed") {
+          stopPolling();
+          setDeployState(data.conclusion === "success" ? "success" : "failure");
+          setPreviewKey((k) => k + 1); // reload iframe
+          // Reset success badge after 8s
+          setTimeout(() => setDeployState("idle"), 8000);
+        } else {
+          setDeployState(data.status === "in_progress" ? "in_progress" : "queued");
+        }
+      } catch {
+        // Silently retry on network error
+      }
+    }, 5000);
+  }, [stopPolling]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
   async function fetchSite() {
     const res = await fetch(`/api/sites/${siteId}`);
     const data = await res.json();
@@ -94,6 +136,9 @@ export default function SiteEditorPage() {
       await fetchSite();
     }
     setDeploying(false);
+    if (data.commitSha) {
+      pollDeployStatus(data.commitSha);
+    }
   }
 
   async function handleChatSend() {
@@ -295,70 +340,131 @@ export default function SiteEditorPage() {
           </div>
         </div>
 
-        {/* Right: AI Chat */}
+        {/* Right: Tabbed Chat / Preview */}
         <div className="w-3/5 flex flex-col bg-gray-50">
-          <div className="p-4 border-b border-gray-200 bg-white">
-            <h2 className="text-lg font-semibold text-zing-dark">
+          {/* Tab bar */}
+          <div className="flex border-b border-gray-200 bg-white">
+            <button
+              onClick={() => setRightTab("chat")}
+              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                rightTab === "chat"
+                  ? "border-zing-teal text-zing-teal"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
               AI Editor
-            </h2>
-            <p className="text-xs text-gray-400">
-              Describe changes and Pixel will edit the HTML
-            </p>
+            </button>
+            <button
+              onClick={() => setRightTab("preview")}
+              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                rightTab === "preview"
+                  ? "border-zing-teal text-zing-teal"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Preview
+            </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {chatMessages.length === 0 && (
-              <p className="text-sm text-gray-400 text-center mt-8">
-                No messages yet. Describe a change to get started.
-              </p>
-            )}
-            {chatMessages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
-                    msg.role === "user"
-                      ? "bg-zing-teal text-white"
-                      : "bg-white border border-gray-200 text-gray-800"
-                  }`}
-                >
-                  {msg.content}
-                </div>
+          {/* Chat panel */}
+          {rightTab === "chat" && (
+            <>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {chatMessages.length === 0 && (
+                  <p className="text-sm text-gray-400 text-center mt-8">
+                    No messages yet. Describe a change to get started.
+                  </p>
+                )}
+                {chatMessages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`flex ${
+                      msg.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
+                        msg.role === "user"
+                          ? "bg-zing-teal text-white"
+                          : "bg-white border border-gray-200 text-gray-800"
+                      }`}
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white border border-gray-200 px-3 py-2 rounded-lg text-sm text-gray-500">
+                      Pixel is editing...
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
               </div>
-            ))}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="bg-white border border-gray-200 px-3 py-2 rounded-lg text-sm text-gray-500">
-                  Pixel is editing...
-                </div>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
 
-          <div className="p-4 border-t border-gray-200 bg-white">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleChatSend()}
-                placeholder="Describe a change..."
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
-              />
-              <button
-                onClick={handleChatSend}
-                disabled={chatLoading || !chatInput.trim()}
-                className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
-              >
-                Send
-              </button>
+              <div className="p-4 border-t border-gray-200 bg-white">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleChatSend()}
+                    placeholder="Describe a change..."
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                  <button
+                    onClick={handleChatSend}
+                    disabled={chatLoading || !chatInput.trim()}
+                    className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Preview panel */}
+          {rightTab === "preview" && (
+            <div className="flex-1 flex flex-col">
+              {site.preview_url ? (
+                <>
+                  <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
+                    <span className="text-xs text-gray-400 truncate">{site.preview_url}</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setPreviewKey((k) => k + 1)}
+                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                      >
+                        ↻ Refresh
+                      </button>
+                      <a
+                        href={site.preview_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-zing-teal hover:underline px-2 py-1"
+                      >
+                        Open ↗
+                      </a>
+                    </div>
+                  </div>
+                  <iframe
+                    key={previewKey}
+                    src={site.preview_url}
+                    className="flex-1 w-full border-0"
+                    title="Site Preview"
+                  />
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center">
+                  <p className="text-sm text-gray-400">
+                    No preview URL yet. Click Deploy Preview to generate one.
+                  </p>
+                </div>
+              )}
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -388,19 +494,43 @@ export default function SiteEditorPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {deploying && (
-            <span className="text-xs text-gray-500">Deploying...</span>
+          {/* Deploy status badge */}
+          {deployState === "queued" && (
+            <span className="text-xs text-amber-600 flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              Queued...
+            </span>
           )}
+          {deployState === "in_progress" && (
+            <span className="text-xs text-blue-600 flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+              Deploying to Cloudflare...
+            </span>
+          )}
+          {deployState === "success" && (
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              ✅ Deploy complete
+            </span>
+          )}
+          {deployState === "failure" && (
+            <span className="text-xs text-red-600 flex items-center gap-1">
+              ❌ Deploy failed
+            </span>
+          )}
+          {deploying && deployState === "idle" && (
+            <span className="text-xs text-gray-500">Committing...</span>
+          )}
+
           <button
             onClick={() => handleDeploy("preview")}
-            disabled={deploying}
+            disabled={deploying || deployState === "in_progress" || deployState === "queued"}
             className="bg-gray-100 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
           >
             Deploy Preview
           </button>
           <button
             onClick={() => handleDeploy("production")}
-            disabled={deploying}
+            disabled={deploying || deployState === "in_progress" || deployState === "queued"}
             className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
           >
             🚀 Push to Production
