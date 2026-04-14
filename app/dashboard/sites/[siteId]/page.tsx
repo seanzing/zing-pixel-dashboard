@@ -76,6 +76,15 @@ export default function SiteEditorPage() {
   const [editLog, setEditLog] = useState<EditLogEntry[]>([]);
   const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions">("deployments");
 
+  // Custom domain
+  const [domainInput, setDomainInput] = useState("");
+  const [domainStatus, setDomainStatus] = useState<"idle" | "adding" | "pending" | "active" | "error">("idle");
+  const [domainError, setDomainError] = useState<string | null>(null);
+  const [cnameTarget, setCnameTarget] = useState<string | null>(null);
+  const [activeDomain, setActiveDomain] = useState<string | null>(null);
+  const [removingDomain, setRemovingDomain] = useState(false);
+  const domainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin
   function buildBlobPreview(html: string, siteId: string): string {
     const base = `<base href="https://${siteId}.pages.dev/">`;
@@ -206,9 +215,93 @@ export default function SiteEditorPage() {
     }
   }
 
+  // Load existing custom domains on mount
+  async function fetchDomains() {
+    const res = await fetch(`/api/sites/${siteId}/domain`);
+    const data = await res.json();
+    if (data.domains?.length > 0) {
+      const d = data.domains[0];
+      setActiveDomain(d.name);
+      setDomainStatus(d.status === "active" ? "active" : "pending");
+      if (d.status !== "active") {
+        setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
+        startDomainPolling(d.name);
+      }
+    }
+  }
+
+  function startDomainPolling(domain: string) {
+    if (domainPollRef.current) clearInterval(domainPollRef.current);
+    domainPollRef.current = setInterval(async () => {
+      const res = await fetch(`/api/sites/${siteId}/domain`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      const data = await res.json();
+      if (data.status === "active") {
+        clearInterval(domainPollRef.current!);
+        domainPollRef.current = null;
+        setDomainStatus("active");
+        setCnameTarget(null);
+        await fetchSite();
+      }
+    }, 15000);
+  }
+
+  async function handleAddDomain() {
+    if (!domainInput.trim()) return;
+    setDomainStatus("adding");
+    setDomainError(null);
+    const res = await fetch(`/api/sites/${siteId}/domain`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain: domainInput.trim() }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      setDomainError(data.error);
+      setDomainStatus("error");
+      return;
+    }
+    const d = data.domain;
+    setActiveDomain(d.name);
+    if (d.status === "active") {
+      setDomainStatus("active");
+      await fetchSite();
+    } else {
+      setDomainStatus("pending");
+      // CF Pages returns the project URL as the CNAME target
+      setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
+      startDomainPolling(d.name);
+    }
+    setDomainInput("");
+  }
+
+  async function handleRemoveDomain() {
+    if (!activeDomain) return;
+    setRemovingDomain(true);
+    if (domainPollRef.current) clearInterval(domainPollRef.current);
+    await fetch(`/api/sites/${siteId}/domain`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain: activeDomain }),
+    });
+    setActiveDomain(null);
+    setDomainStatus("idle");
+    setCnameTarget(null);
+    setRemovingDomain(false);
+    await fetchSite();
+  }
+
+  useEffect(() => {
+    return () => { if (domainPollRef.current) clearInterval(domainPollRef.current); };
+  }, []);
+
   useEffect(() => {
     fetchSite();
     fetchVersions();
+    fetchDomains();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
@@ -472,8 +565,109 @@ export default function SiteEditorPage() {
             {saving ? "Saving..." : "Save Changes"}
           </button>
 
+          {/* Go Live / Custom Domain */}
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Custom Domain
+              </p>
+              {domainStatus === "active" && (
+                <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                  Live
+                </span>
+              )}
+              {domainStatus === "pending" && (
+                <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block animate-pulse" />
+                  Pending DNS
+                </span>
+              )}
+            </div>
+
+            {activeDomain ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                  <span className="text-sm font-medium text-zing-dark">{activeDomain}</span>
+                  <button
+                    onClick={handleRemoveDomain}
+                    disabled={removingDomain}
+                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                  >
+                    {removingDomain ? "Removing..." : "Remove"}
+                  </button>
+                </div>
+
+                {domainStatus === "pending" && cnameTarget && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs space-y-1.5">
+                    <p className="font-medium text-amber-800">DNS setup required</p>
+                    <p className="text-amber-700">Add this CNAME record at your domain registrar:</p>
+                    <div className="font-mono bg-white border border-amber-200 rounded px-2 py-1.5 space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Type</span>
+                        <span className="font-semibold">CNAME</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Name</span>
+                        <span className="font-semibold">@</span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-gray-500 shrink-0">Target</span>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(cnameTarget)}
+                          className="font-semibold text-zing-teal hover:underline truncate"
+                          title="Click to copy"
+                        >
+                          {cnameTarget}
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-amber-600">Checking every 15s — this page will update automatically once DNS propagates.</p>
+                  </div>
+                )}
+
+                {domainStatus === "active" && site?.live_url && (
+                  <a
+                    href={site.live_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-center text-xs text-zing-teal hover:underline"
+                  >
+                    Open live site ↗
+                  </a>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={domainInput}
+                    onChange={(e) => setDomainInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
+                    placeholder="e.g. mooreroofingfl.com"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                  <button
+                    onClick={handleAddDomain}
+                    disabled={domainStatus === "adding" || !domainInput.trim()}
+                    className="bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {domainStatus === "adding" ? "Adding..." : "Go Live"}
+                  </button>
+                </div>
+                {domainError && (
+                  <p className="text-xs text-red-600">{domainError}</p>
+                )}
+                <p className="text-xs text-gray-400">
+                  Enter the customer&apos;s domain. SSL is provisioned automatically by Cloudflare.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Archive section */}
-          <div className="mt-10 pt-6 border-t border-gray-200">
+          <div className="mt-6 pt-6 border-t border-gray-200">
             <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
               Danger Zone
             </p>
