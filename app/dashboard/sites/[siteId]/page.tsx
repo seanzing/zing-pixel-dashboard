@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 interface Site {
   id: string;
   business_name: string;
+  owner_email: string;
   phone: string;
   email: string;
   address: string;
@@ -16,6 +17,21 @@ interface Site {
   status: string;
   preview_url: string | null;
   live_url: string | null;
+}
+
+interface Version {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+interface EditLogEntry {
+  id: string;
+  action: string;
+  summary: string;
+  user_email: string | null;
+  created_at: string;
 }
 
 interface Deployment {
@@ -54,6 +70,11 @@ export default function SiteEditorPage() {
 
   const [extracting, setExtracting] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
+  const [editLog, setEditLog] = useState<EditLogEntry[]>([]);
+  const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions">("deployments");
 
   // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin
   function buildBlobPreview(html: string, siteId: string): string {
@@ -121,6 +142,7 @@ export default function SiteEditorPage() {
     const data = await res.json();
     setSite(data.site);
     setDeployments(data.deployments ?? []);
+    setEditLog(data.editLog ?? []);
     if (data.chatMessages) {
       setChatMessages(data.chatMessages);
     }
@@ -154,8 +176,39 @@ export default function SiteEditorPage() {
     }
   }
 
+  async function fetchVersions() {
+    setVersionsLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/versions`);
+      const data = await res.json();
+      setVersions(data.versions ?? []);
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
+  async function handleRollback(sha: string) {
+    setRollingBack(sha);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/rollback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sha }),
+      });
+      const data = await res.json();
+      if (data.commitSha) {
+        pollDeployStatus(data.commitSha);
+        await fetchVersions();
+        await fetchSite();
+      }
+    } finally {
+      setRollingBack(null);
+    }
+  }
+
   useEffect(() => {
     fetchSite();
+    fetchVersions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
@@ -327,9 +380,15 @@ export default function SiteEditorPage() {
               onChange={(v) => setSite({ ...site, phone: v })}
             />
             <Field
-              label="Email"
+              label="Contact Email"
               value={site.email ?? ""}
               onChange={(v) => setSite({ ...site, email: v })}
+            />
+            <Field
+              label="Form Routing Email"
+              value={site.owner_email ?? ""}
+              onChange={(v) => setSite({ ...site, owner_email: v })}
+              helpText="Contact form submissions go here"
             />
             <Field
               label="Address"
@@ -649,53 +708,127 @@ export default function SiteEditorPage() {
         </div>
       </div>
 
-      {/* Deployment history */}
-      {deployments.length > 0 && (
-        <div className="border-t border-gray-200 bg-gray-50 px-6 py-2">
-          <p className="text-xs font-medium text-gray-500 mb-1">
-            Recent Deployments
-          </p>
-          <div className="space-y-1">
-            {deployments.slice(0, 5).map((dep) => (
-              <div
-                key={dep.id}
-                className="flex items-center gap-3 text-xs text-gray-500"
-              >
-                <span
-                  className={`font-medium ${
-                    dep.type === "production"
-                      ? "text-green-600"
-                      : "text-amber-600"
-                  }`}
-                >
-                  {dep.type}
-                </span>
-                <a
-                  href={dep.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-zing-teal hover:underline"
-                >
-                  {dep.url}
-                </a>
-                <span>
-                  {new Date(dep.deployed_at).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-                {dep.deployed_by && (
-                  <span className="text-gray-400">
-                    by {dep.deployed_by.split("@")[0]}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+      {/* Bottom tabs: Deployments / Activity / Versions */}
+      <div className="border-t border-gray-200 bg-gray-50">
+        <div className="flex gap-1 px-6 pt-3 border-b border-gray-200">
+          {(["deployments", "activity", "versions"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => { setBottomTab(tab); if (tab === "versions") fetchVersions(); }}
+              className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                bottomTab === tab
+                  ? "text-zing-teal border-b-2 border-zing-teal -mb-px bg-white rounded-t"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab}
+              {tab === "deployments" && deployments.length > 0 && (
+                <span className="ml-1 text-gray-400">({deployments.length})</span>
+              )}
+              {tab === "activity" && editLog.length > 0 && (
+                <span className="ml-1 text-gray-400">({editLog.length})</span>
+              )}
+            </button>
+          ))}
         </div>
-      )}
+
+        <div className="px-6 py-3 max-h-48 overflow-y-auto">
+          {bottomTab === "deployments" && (
+            deployments.length === 0 ? (
+              <p className="text-xs text-gray-400">No deployments yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {deployments.map((dep) => (
+                  <div key={dep.id} className="flex items-center gap-3 text-xs text-gray-500">
+                    <span className={`font-medium w-20 shrink-0 ${
+                      dep.type === "production" ? "text-green-600" : dep.type === "rollback" ? "text-purple-600" : "text-amber-600"
+                    }`}>
+                      {dep.type}
+                    </span>
+                    {dep.url && (
+                      <a href={dep.url} target="_blank" rel="noopener noreferrer"
+                        className="text-zing-teal hover:underline truncate max-w-xs">
+                        {dep.url}
+                      </a>
+                    )}
+                    <span className="shrink-0">
+                      {new Date(dep.deployed_at).toLocaleDateString("en-US", {
+                        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                      })}
+                    </span>
+                    {dep.deployed_by && (
+                      <span className="text-gray-400 shrink-0">by {dep.deployed_by.split("@")[0]}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {bottomTab === "activity" && (
+            editLog.length === 0 ? (
+              <p className="text-xs text-gray-400">No edit activity yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {editLog.map((entry) => (
+                  <div key={entry.id} className="flex items-start gap-3 text-xs text-gray-500">
+                    <span className={`font-medium shrink-0 ${
+                      entry.action === "ai_edit" ? "text-zing-teal" : "text-gray-600"
+                    }`}>
+                      {entry.action === "ai_edit" ? "AI" : "Field"}
+                    </span>
+                    <span className="flex-1 truncate" title={entry.summary}>{entry.summary}</span>
+                    <span className="shrink-0 text-gray-400">
+                      {new Date(entry.created_at).toLocaleDateString("en-US", {
+                        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                      })}
+                    </span>
+                    {entry.user_email && (
+                      <span className="text-gray-400 shrink-0">
+                        {entry.user_email.split("@")[0]}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {bottomTab === "versions" && (
+            versionsLoading ? (
+              <p className="text-xs text-gray-400">Loading...</p>
+            ) : versions.length === 0 ? (
+              <p className="text-xs text-gray-400">No version history yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {versions.slice(0, 15).map((v, i) => (
+                  <div key={v.sha} className="flex items-center gap-3 text-xs text-gray-500">
+                    <span className="font-mono text-gray-400 w-14 shrink-0">{v.sha.slice(0, 7)}</span>
+                    <span className="flex-1 truncate" title={v.message}>
+                      {i === 0 && <span className="text-green-600 font-medium">current — </span>}
+                      {v.message}
+                    </span>
+                    <span className="shrink-0 text-gray-400">
+                      {new Date(v.date).toLocaleDateString("en-US", {
+                        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                      })}
+                    </span>
+                    {i > 0 && (
+                      <button
+                        onClick={() => handleRollback(v.sha)}
+                        disabled={rollingBack === v.sha}
+                        className="shrink-0 text-xs text-amber-600 hover:text-amber-800 font-medium disabled:opacity-50"
+                      >
+                        {rollingBack === v.sha ? "Restoring..." : "Restore"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      </div>
 
       {/* Archive confirmation modal */}
       {showArchiveModal && (
@@ -734,10 +867,12 @@ function Field({
   label,
   value,
   onChange,
+  helpText,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  helpText?: string;
 }) {
   return (
     <div>
@@ -750,6 +885,9 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
       />
+      {helpText && (
+        <p className="text-xs text-gray-400 mt-0.5">{helpText}</p>
+      )}
     </div>
   );
 }

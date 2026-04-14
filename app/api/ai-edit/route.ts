@@ -50,6 +50,14 @@ export async function POST(request: Request) {
       .update({ updated_at: new Date().toISOString() })
       .eq("id", siteId);
 
+    // Log the edit
+    await supabase.from("edit_log").insert({
+      site_id: siteId,
+      user_email: deployedBy,
+      action: "ai_edit",
+      summary: message.slice(0, 200),
+    }).then(() => {}); // non-fatal if table doesn't exist yet
+
     return NextResponse.json({
       changes: result.changes,
       html: result.html,

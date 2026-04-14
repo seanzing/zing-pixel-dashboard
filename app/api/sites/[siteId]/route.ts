@@ -32,10 +32,18 @@ export async function GET(
     .eq("site_id", siteId)
     .order("created_at", { ascending: true });
 
+  const { data: editLog } = await supabase
+    .from("edit_log")
+    .select("id, action, summary, user_email, created_at")
+    .eq("site_id", siteId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
   return NextResponse.json({
     site,
     deployments: deployments ?? [],
     chatMessages: chatMessages ?? [],
+    editLog: editLog ?? [],
   });
 }
 
@@ -62,6 +70,7 @@ export async function PATCH(
   const updateFields: Record<string, string> = {};
   const fieldKeys = [
     "business_name",
+    "owner_email",
     "phone",
     "email",
     "address",
@@ -183,6 +192,33 @@ export async function PATCH(
     } catch {
       // GitHub write failed — non-critical for save
     }
+  }
+
+  // Sync owner_email to forms service if it changed
+  if (body.owner_email && body.owner_email !== currentSite.owner_email) {
+    const formsUrl = process.env.FORMS_API_URL;
+    if (formsUrl) {
+      try {
+        await fetch(`${formsUrl}/admin/sites/${siteId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ownerEmail: body.owner_email }),
+        });
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  // Log the field save
+  const changedFields = Object.keys(updateFields).filter(
+    (k) => k !== "updated_at" && body[k] !== undefined && body[k] !== (currentSite as Record<string, unknown>)[k]
+  );
+  if (changedFields.length > 0) {
+    await supabase.from("edit_log").insert({
+      site_id: siteId,
+      user_email: null,
+      action: "field_save",
+      summary: `Updated: ${changedFields.join(", ")}`,
+    }).then(() => {}); // non-fatal if table doesn't exist yet
   }
 
   return NextResponse.json({ site, html: updatedHtml });

@@ -12,21 +12,28 @@ interface Site {
   updated_at: string;
 }
 
+type StatusFilter = "all" | "preview" | "live" | "archived";
+
+const STATUS_TABS: { key: StatusFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "preview", label: "Preview" },
+  { key: "live", label: "Live" },
+  { key: "archived", label: "Archived" },
+];
+
 export default function DashboardPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [search, setSearch] = useState("");
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const router = useRouter();
 
   async function fetchSites() {
     try {
       const res = await fetch("/api/sites", { cache: "no-store" });
-      const text = await res.text();
-      console.log("API response status:", res.status);
-      console.log("API response body:", text);
-      const data = JSON.parse(text);
+      const data = await res.json();
       setSites(data.sites ?? []);
     } catch (err) {
       console.error("fetchSites error:", err);
@@ -58,22 +65,28 @@ export default function DashboardPage() {
     await fetchSites();
   }
 
-  const visibleSites = showArchived
-    ? sites
-    : sites.filter((s) => s.status !== "archived");
+  const counts = {
+    all: sites.filter((s) => s.status !== "archived").length,
+    preview: sites.filter((s) => s.status === "preview").length,
+    live: sites.filter((s) => s.status === "live").length,
+    archived: sites.filter((s) => s.status === "archived").length,
+  };
+
+  const visibleSites = sites.filter((s) => {
+    const matchesStatus =
+      statusFilter === "all" ? s.status !== "archived" : s.status === statusFilter;
+    const q = search.toLowerCase();
+    const matchesSearch =
+      !q ||
+      s.business_name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q);
+    return matchesStatus && matchesSearch;
+  });
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
-          <button
-            onClick={() => setShowArchived(!showArchived)}
-            className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            {showArchived ? "Hide archived" : "Show archived"}
-          </button>
-        </div>
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
         <button
           onClick={() => setShowModal(true)}
           className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors"
@@ -82,11 +95,42 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* Tabs + Search */}
+      <div className="flex items-center justify-between mb-5 gap-4">
+        <div className="flex gap-1 border-b border-gray-200 flex-1">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setStatusFilter(tab.key)}
+              className={`px-3 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
+                statusFilter === tab.key
+                  ? "text-zing-teal border-b-2 border-zing-teal -mb-px"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab.label}
+              <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${
+                statusFilter === tab.key ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"
+              }`}>
+                {counts[tab.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          placeholder="Search sites..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="px-3 py-1.5 border border-gray-200 rounded-md text-sm w-52 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+        />
+      </div>
+
       {loading ? (
         <p className="text-gray-500 text-sm">Loading...</p>
       ) : visibleSites.length === 0 ? (
         <p className="text-gray-500 text-sm">
-          No sites yet. Add your first site.
+          {search ? `No sites matching "${search}"` : "No sites yet. Add your first site."}
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
