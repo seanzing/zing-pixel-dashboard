@@ -182,15 +182,32 @@ export async function PATCH(
     updatedHtml = html;
 
     // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
+    let fieldCommitSha: string | undefined;
+    const fieldCommitMsg = `update(${siteId}): structured fields`;
     try {
-      await writeFile(
+      fieldCommitSha = await writeFile(
         `${siteId}/index.html`,
         html,
-        `update(${siteId}): structured fields`,
+        fieldCommitMsg,
         file.sha
       );
     } catch {
       // GitHub write failed — non-critical for save
+    }
+
+    // Log the field save with commit SHA
+    const changedFields = Object.keys(updateFields).filter(
+      (k) => k !== "updated_at" && body[k] !== undefined && body[k] !== (currentSite as Record<string, unknown>)[k]
+    );
+    if (changedFields.length > 0) {
+      await supabase.from("edit_log").insert({
+        site_id: siteId,
+        user_email: null,
+        action: "field_save",
+        summary: `Updated: ${changedFields.join(", ")}`,
+        commit_sha: fieldCommitSha ?? null,
+        commit_message: fieldCommitMsg,
+      }).then(() => {});
     }
   }
 
@@ -206,19 +223,6 @@ export async function PATCH(
         });
       } catch { /* non-fatal */ }
     }
-  }
-
-  // Log the field save
-  const changedFields = Object.keys(updateFields).filter(
-    (k) => k !== "updated_at" && body[k] !== undefined && body[k] !== (currentSite as Record<string, unknown>)[k]
-  );
-  if (changedFields.length > 0) {
-    await supabase.from("edit_log").insert({
-      site_id: siteId,
-      user_email: null,
-      action: "field_save",
-      summary: `Updated: ${changedFields.join(", ")}`,
-    }).then(() => {}); // non-fatal if table doesn't exist yet
   }
 
   return NextResponse.json({ site, html: updatedHtml });

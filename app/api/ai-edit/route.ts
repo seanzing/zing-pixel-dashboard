@@ -31,10 +31,11 @@ export async function POST(request: Request) {
     const result = await processAiEdit(currentHtml, message, chatHistory ?? []);
 
     // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
-    await writeFile(
+    const commitMsg = `edit(${siteId}): ${result.changes.slice(0, 72)}`;
+    const commitSha = await writeFile(
       `${siteId}/index.html`,
       result.html,
-      `edit(${siteId}): ${result.changes.slice(0, 72)}`,
+      commitMsg,
       file.sha
     );
 
@@ -50,13 +51,15 @@ export async function POST(request: Request) {
       .update({ updated_at: new Date().toISOString() })
       .eq("id", siteId);
 
-    // Log the edit
+    // Log the edit (includes commit SHA for full audit trail)
     await supabase.from("edit_log").insert({
       site_id: siteId,
       user_email: deployedBy,
       action: "ai_edit",
       summary: message.slice(0, 200),
-    }).then(() => {}); // non-fatal if table doesn't exist yet
+      commit_sha: commitSha,
+      commit_message: commitMsg.slice(0, 255),
+    }).then(() => {});
 
     return NextResponse.json({
       changes: result.changes,

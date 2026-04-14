@@ -801,7 +801,7 @@ export default function SiteEditorPage() {
               <p className="text-xs text-gray-400">No version history yet.</p>
             ) : (
               <div className="space-y-1.5">
-                {versions.slice(0, 15).map((v, i) => (
+                {versions.map((v, i) => (
                   <div key={v.sha} className="flex items-center gap-3 text-xs text-gray-500">
                     <span className="font-mono text-gray-400 w-14 shrink-0">{v.sha.slice(0, 7)}</span>
                     <span className="flex-1 truncate" title={v.message}>

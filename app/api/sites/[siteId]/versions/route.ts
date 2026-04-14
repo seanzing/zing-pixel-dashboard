@@ -10,7 +10,7 @@ export async function GET(
   const { siteId } = params;
 
   const res = await fetch(
-    `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(`${siteId}/index.html`)}&per_page=20`,
+    `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(`${siteId}/index.html`)}&per_page=100`,
     {
       headers: {
         Authorization: `token ${GH_TOKEN}`,
