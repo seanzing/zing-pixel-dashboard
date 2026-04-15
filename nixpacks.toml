@@ -3,4 +3,4 @@ cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build"]
-cacheDirectories = [".next/cache", "node_modules/.cache"]
+cacheDirectories = ["node_modules/.cache"]
