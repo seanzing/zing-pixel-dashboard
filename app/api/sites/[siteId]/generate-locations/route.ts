@@ -84,6 +84,15 @@ function transformHtml(
   baseState: string
 ): string {
   const $ = cheerio.load(html, { xmlMode: false });
+
+  // Inject <base href="/"> so all relative asset paths (./logo.jpg, ./about.jpg, etc.)
+  // resolve from the site root — without this, images break on /locations/{city}/ pages
+  if (!$("base").length) {
+    $("head").prepend('<base href="/">');
+  } else {
+    $("base").attr("href", "/");
+  }
+
   const cityState = `${targetCity}, ${targetState}`;
   const slug = locationSlug(targetCity, targetState);
   const cityPattern = new RegExp(`${baseCity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},?\\s*${baseState}`, "ig");
