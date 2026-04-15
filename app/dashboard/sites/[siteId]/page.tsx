@@ -81,6 +81,15 @@ export default function SiteEditorPage() {
   const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
   const [locationPreview, setLocationPreview] = useState<string | null>(null);
 
+  // Generate locations modal
+  const [showLocModal, setShowLocModal] = useState(false);
+  const [locCity, setLocCity] = useState("");
+  const [locState, setLocState] = useState("");
+  const [locCount, setLocCount] = useState("50");
+  const [locRunning, setLocRunning] = useState(false);
+  const [locLog, setLocLog] = useState<Array<{ type: "progress" | "page" | "done" | "error"; text: string; status?: string }>>([]);
+  const [locDone, setLocDone] = useState(false);
+
   // Custom domain
   const [domainInput, setDomainInput] = useState("");
   const [domainStatus, setDomainStatus] = useState<"idle" | "adding" | "pending" | "active" | "error">("idle");
@@ -166,6 +175,16 @@ export default function SiteEditorPage() {
     setSite(data.site);
     setDeployments(data.deployments ?? []);
     setEditLog(data.editLog ?? []);
+    // Pre-fill location generator from site address
+    if (data.site?.address) {
+      const addrParts = (data.site.address as string).split(",").map((s: string) => s.trim());
+      if (addrParts.length >= 2) {
+        const stateZip = addrParts[addrParts.length - 1];
+        const stateMatch = stateZip.match(/\b([A-Z]{2})\b/);
+        if (stateMatch) setLocState(stateMatch[1]);
+        if (addrParts.length >= 3) setLocCity(addrParts[addrParts.length - 2]);
+      }
+    }
     if (data.chatMessages) {
       setChatMessages(data.chatMessages);
     }
@@ -207,6 +226,62 @@ export default function SiteEditorPage() {
       if (res.ok) setAnalyticsData(await res.json());
     } catch { /* ignore */ } finally {
       setAnalyticsLoading(false);
+    }
+  }
+
+  async function runGenerateLocations() {
+    if (!locCity.trim() || !locState.trim()) return;
+    setLocRunning(true);
+    setLocDone(false);
+    setLocLog([]);
+
+    try {
+      const res = await fetch(`/api/sites/${siteId}/generate-locations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ city: locCity.trim(), state: locState.trim().toUpperCase(), count: parseInt(locCount, 10) || 50 }),
+      });
+
+      if (!res.body) throw new Error("No stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const lines = block.split("\n");
+          const eventLine = lines.find(l => l.startsWith("event:"));
+          const dataLine = lines.find(l => l.startsWith("data:"));
+          if (!eventLine || !dataLine) continue;
+          const event = eventLine.replace("event:", "").trim();
+          const payload = JSON.parse(dataLine.replace("data:", "").trim());
+
+          if (event === "progress") {
+            setLocLog(prev => [...prev, { type: "progress", text: payload.message }]);
+          } else if (event === "page") {
+            const icon = payload.status === "ok" ? "✅" : "❌";
+            setLocLog(prev => [...prev, { type: "page", text: `${icon} [${payload.index}/${payload.total}] ${payload.city}`, status: payload.status }]);
+          } else if (event === "done") {
+            setLocLog(prev => [...prev, { type: "done", text: `✨ Done — ${payload.pushed} pages generated${payload.failed > 0 ? `, ${payload.failed} failed` : ""}` }]);
+            setLocDone(true);
+            // Refresh locations list
+            fetchLocations();
+          } else if (event === "error") {
+            setLocLog(prev => [...prev, { type: "error", text: `💥 ${payload.message}` }]);
+            setLocDone(true);
+          }
+        }
+      }
+    } catch (err) {
+      setLocLog(prev => [...prev, { type: "error", text: `Error: ${(err as Error).message}` }]);
+      setLocDone(true);
+    } finally {
+      setLocRunning(false);
     }
   }
 
@@ -1134,6 +1209,12 @@ export default function SiteEditorPage() {
           >
             Push to Production
           </button>
+          <button
+            onClick={() => setShowLocModal(true)}
+            className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 transition-colors flex items-center gap-1.5"
+          >
+            📍 Generate Locations
+          </button>
         </div>
         </div>
         </div>
@@ -1303,6 +1384,96 @@ export default function SiteEditorPage() {
           )}
         </div>
       </div>
+
+      {/* Generate Locations modal */}
+      {showLocModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col" style={{ maxHeight: "80vh" }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+              <div>
+                <h3 className="text-sm font-semibold text-zing-dark">📍 Generate Location Pages</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Creates 50 SEO landing pages targeting nearby cities</p>
+              </div>
+              <button onClick={() => { if (!locRunning) setShowLocModal(false); }} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+            </div>
+
+            {/* Form */}
+            {!locRunning && !locDone && (
+              <div className="px-6 py-5 space-y-4 shrink-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Base City</label>
+                    <input
+                      value={locCity}
+                      onChange={e => setLocCity(e.target.value)}
+                      placeholder="Orange Park"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">State</label>
+                    <input
+                      value={locState}
+                      onChange={e => setLocState(e.target.value.toUpperCase().slice(0, 2))}
+                      placeholder="FL"
+                      maxLength={2}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal uppercase"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Number of Pages</label>
+                  <select
+                    value={locCount}
+                    onChange={e => setLocCount(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  >
+                    <option value="25">25 pages</option>
+                    <option value="50">50 pages (recommended)</option>
+                    <option value="75">75 pages</option>
+                    <option value="100">100 pages</option>
+                  </select>
+                </div>
+                <p className="text-[11px] text-gray-400">Cities are selected by population × proximity — larger nearby cities rank first. Pages deploy automatically via GitHub Actions.</p>
+              </div>
+            )}
+
+            {/* Progress log */}
+            {(locRunning || locLog.length > 0) && (
+              <div className="flex-1 overflow-y-auto px-6 py-3 font-mono text-[11px] space-y-0.5 bg-gray-50 border-t border-gray-100 min-h-0">
+                {locLog.map((entry, i) => (
+                  <div key={i} className={`leading-5 ${entry.type === "done" ? "text-green-600 font-semibold mt-2" : entry.type === "error" ? "text-red-500" : entry.status === "error" ? "text-red-400" : "text-gray-600"}`}>
+                    {entry.text}
+                  </div>
+                ))}
+                {locRunning && <div className="text-gray-400 animate-pulse">Running…</div>}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between shrink-0">
+              {locDone ? (
+                <>
+                  <button onClick={() => { setShowLocModal(false); setLocLog([]); setLocDone(false); setBottomTab("locations"); }} className="text-xs text-zing-teal hover:underline">View in Locations tab →</button>
+                  <button onClick={() => { setLocLog([]); setLocDone(false); }} className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-200">Run again</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => setShowLocModal(false)} disabled={locRunning} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40">Cancel</button>
+                  <button
+                    onClick={runGenerateLocations}
+                    disabled={locRunning || !locCity.trim() || !locState.trim()}
+                    className="bg-zing-teal text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-zing-dark transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {locRunning ? <><span className="animate-spin">⟳</span> Generating…</> : "Generate Pages"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Archive confirmation modal */}
       {showArchiveModal && (
