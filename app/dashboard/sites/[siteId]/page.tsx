@@ -106,6 +106,7 @@ export default function SiteEditorPage() {
   // Right panel tab: "chat" | "preview"
   const [rightTab, setRightTab] = useState<"chat" | "preview">("chat");
   const [previewKey, setPreviewKey] = useState(0); // increment to force iframe reload
+  const [deviceView, setDeviceView] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
   // Deploy status polling
   type DeployState = "idle" | "queued" | "in_progress" | "success" | "failure";
@@ -693,27 +694,66 @@ export default function SiteEditorPage() {
         <Panel defaultSize={78} minSize={40}>
         <div className="h-full flex flex-col bg-gray-50">
           {/* Tab bar */}
-          <div className="flex border-b border-gray-200 bg-white">
-            <button
-              onClick={() => setRightTab("chat")}
-              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-                rightTab === "chat"
-                  ? "border-zing-teal text-zing-teal"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              AI Editor
-            </button>
-            <button
-              onClick={() => setRightTab("preview")}
-              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-                rightTab === "preview"
-                  ? "border-zing-teal text-zing-teal"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              Preview
-            </button>
+          <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-3">
+            <div className="flex">
+              <button
+                onClick={() => setRightTab("chat")}
+                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  rightTab === "chat"
+                    ? "border-zing-teal text-zing-teal"
+                    : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                AI Editor
+              </button>
+              <button
+                onClick={() => setRightTab("preview")}
+                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  rightTab === "preview"
+                    ? "border-zing-teal text-zing-teal"
+                    : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Preview
+              </button>
+            </div>
+
+            {/* Device toggle — only when on Preview tab */}
+            {rightTab === "preview" && (
+              <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
+                {(["desktop", "tablet", "mobile"] as const).map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDeviceView(d)}
+                    title={d.charAt(0).toUpperCase() + d.slice(1)}
+                    className={`px-2 py-1 rounded text-gray-500 transition-colors ${
+                      deviceView === d
+                        ? "bg-white shadow-sm text-zing-dark"
+                        : "hover:text-gray-700"
+                    }`}
+                  >
+                    {d === "desktop" && (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="20" height="14" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                        <path d="M8 21h8M12 17v4" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                    )}
+                    {d === "tablet" && (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <rect x="4" y="2" width="16" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                        <circle cx="12" cy="18" r="1" fill="currentColor"/>
+                      </svg>
+                    )}
+                    {d === "mobile" && (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <rect x="7" y="2" width="10" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                        <circle cx="12" cy="18" r="1" fill="currentColor"/>
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Chat panel */}
@@ -823,12 +863,59 @@ export default function SiteEditorPage() {
                       )}
                     </div>
                   </div>
-                  <iframe
-                    key={previewKey}
-                    src={blobUrl ?? site.preview_url ?? ""}
-                    className="flex-1 w-full border-0"
-                    title="Site Preview"
-                  />
+                  {/* Device frame + iframe */}
+                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center">
+                    {deviceView === "desktop" ? (
+                      <iframe
+                        key={`${previewKey}-desktop`}
+                        src={blobUrl ?? site.preview_url ?? ""}
+                        className="w-full h-full border-0 bg-white"
+                        style={{ minHeight: "100%" }}
+                        title="Site Preview"
+                      />
+                    ) : (
+                      <div
+                        className="my-4 shrink-0 relative"
+                        style={{
+                          width: deviceView === "tablet" ? 768 : 375,
+                        }}
+                      >
+                        {/* Device chrome */}
+                        <div
+                          className={`rounded-2xl overflow-hidden shadow-xl border-4 ${
+                            deviceView === "tablet"
+                              ? "border-gray-700 rounded-2xl"
+                              : "border-gray-800 rounded-3xl"
+                          }`}
+                        >
+                          {/* Status bar strip */}
+                          <div className="bg-gray-800 h-6 flex items-center justify-center">
+                            <div className={`bg-gray-600 rounded-full ${
+                              deviceView === "tablet" ? "w-12 h-1" : "w-20 h-1.5"
+                            }`} />
+                          </div>
+                          <iframe
+                            key={`${previewKey}-${deviceView}`}
+                            src={blobUrl ?? site.preview_url ?? ""}
+                            className="block border-0 bg-white"
+                            style={{
+                              width: deviceView === "tablet" ? 760 : 367,
+                              height: deviceView === "tablet" ? 960 : 700,
+                            }}
+                            title="Site Preview"
+                          />
+                          {/* Home bar */}
+                          <div className="bg-gray-800 h-6 flex items-center justify-center">
+                            <div className="bg-gray-600 rounded-full w-16 h-1" />
+                          </div>
+                        </div>
+                        {/* Size label */}
+                        <p className="text-center text-xs text-gray-400 mt-2">
+                          {deviceView === "tablet" ? "768px — Tablet" : "375px — Mobile"}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center">
