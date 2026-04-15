@@ -438,13 +438,13 @@ export default function SiteEditorPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
       <PanelGroup direction="vertical" autoSaveId="pixel-vertical" className="flex-1 overflow-hidden">
         <Panel defaultSize={80} minSize={35}>
           <PanelGroup direction="horizontal" autoSaveId="pixel-horizontal" className="h-full">
         {/* Left: Structured Fields */}
-        <Panel defaultSize={22} minSize={16} maxSize={45} className="h-full">
-        <div className="h-full border-r border-gray-200 overflow-y-auto p-5 bg-white">
+        <Panel defaultSize={22} minSize={16} maxSize={45} className="h-full min-w-0">
+        <div className="h-full border-r border-gray-200 overflow-y-auto overflow-x-hidden p-5 bg-white min-w-0">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-zing-dark">Site Details</h2>
             <button
@@ -1175,18 +1175,18 @@ function Field({
   helpText?: string;
 }) {
   return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
+    <div className="min-w-0">
+      <label className="block text-xs font-medium text-gray-500 mb-1 truncate" title={label}>
         {label}
       </label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+        className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
       />
       {helpText && (
-        <p className="text-xs text-gray-400 mt-0.5">{helpText}</p>
+        <p className="text-xs text-gray-400 mt-0.5 break-words">{helpText}</p>
       )}
     </div>
   );

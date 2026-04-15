@@ -32,7 +32,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex overflow-hidden">
       <aside
         className={`bg-zing-dark text-white flex flex-col shrink-0 transition-all duration-200 ${
           collapsed ? "w-12" : "w-56"
@@ -100,7 +100,7 @@ export default function DashboardLayout({
         )}
       </aside>
 
-      <main className="flex-1 bg-zing-cream overflow-auto">{children}</main>
+      <main className="flex-1 bg-zing-cream overflow-hidden h-full">{children}</main>
     </div>
   );
 }
