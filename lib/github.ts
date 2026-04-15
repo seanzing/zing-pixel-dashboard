@@ -56,3 +56,14 @@ export async function directoryExists(path: string): Promise<boolean> {
   });
   return res.ok;
 }
+
+/** List top-level directory names in the repo root. */
+export async function listRootDirectories(): Promise<string[]> {
+  const res = await fetch(`${GITHUB_API}/repos/${REPO}/contents/`, {
+    headers: headers(),
+    next: { revalidate: 0 },
+  } as RequestInit);
+  if (!res.ok) return [];
+  const data: Array<{ name: string; type: string }> = await res.json();
+  return data.filter((item) => item.type === "dir").map((item) => item.name);
+}
