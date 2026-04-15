@@ -85,13 +85,33 @@ function transformHtml(
 ): string {
   const $ = cheerio.load(html, { xmlMode: false });
 
-  // Inject <base href="/"> so all relative asset paths (./logo.jpg, ./about.jpg, etc.)
-  // resolve from the site root — without this, images break on /locations/{city}/ pages
+  // Inject <base href="/"> so relative HTML attr paths (src="./logo.jpg") resolve from root
   if (!$("base").length) {
     $("head").prepend('<base href="/">');
   } else {
     $("base").attr("href", "/");
   }
+
+  // Rewrite relative url() refs in <style> blocks — <base> doesn't affect CSS
+  // e.g. url('./hero.jpg') → url('/hero.jpg'), url('hero.jpg') → url('/hero.jpg')
+  $("style").each((_, el) => {
+    const original = $(el).html() ?? "";
+    const fixed = original.replace(
+      /url\(\s*['"]?((?!https?:\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
+      (_match: string, p1: string) => `url('/${p1.replace(/^\.\//, "")}')`
+    );
+    if (fixed !== original) $(el).html(fixed);
+  });
+
+  // Rewrite relative url() in inline style= attributes too
+  $("[style]").each((_, el) => {
+    const original = $(el).attr("style") ?? "";
+    const fixed = original.replace(
+      /url\(\s*['"]?((?!https?:\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
+      (_match: string, p1: string) => `url('/${p1.replace(/^\.\//, "")}')`
+    );
+    if (fixed !== original) $(el).attr("style", fixed);
+  });
 
   const cityState = `${targetCity}, ${targetState}`;
   const slug = locationSlug(targetCity, targetState);
