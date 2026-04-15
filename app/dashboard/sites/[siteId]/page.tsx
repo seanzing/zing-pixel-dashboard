@@ -104,7 +104,15 @@ export default function SiteEditorPage() {
   useEffect(() => () => revokeBlobUrl(), []); // cleanup on unmount
 
   // Right panel tab: "chat" | "preview"
-  const [rightTab, setRightTab] = useState<"chat" | "preview">("chat");
+  const [rightTab, setRightTab] = useState<"chat" | "preview" | "analytics">("chat");
+  const [analyticsData, setAnalyticsData] = useState<{
+    pageviews: number; visits: number;
+    daily: Array<{ date: string; pageviews: number; visits: number }>;
+    countries: Array<{ name: string; count: number }>;
+    referrers: Array<{ host: string; count: number }>;
+    devices: Array<{ type: string; count: number }>;
+  } | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [previewKey, setPreviewKey] = useState(0); // increment to force iframe reload
   const [deviceView, setDeviceView] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
@@ -184,6 +192,17 @@ export default function SiteEditorPage() {
       }
     } finally {
       setExtracting(false);
+    }
+  }
+
+  async function fetchAnalytics() {
+    if (analyticsLoading || analyticsData) return;
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/analytics`);
+      if (res.ok) setAnalyticsData(await res.json());
+    } catch { /* ignore */ } finally {
+      setAnalyticsLoading(false);
     }
   }
 
@@ -711,6 +730,16 @@ export default function SiteEditorPage() {
               >
                 Preview
               </button>
+              <button
+                onClick={() => { setRightTab("analytics"); fetchAnalytics(); }}
+                className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+                  rightTab === "analytics"
+                    ? "border-zing-teal text-zing-teal"
+                    : "border-transparent text-gray-400 hover:text-gray-600"
+                }`}
+              >
+                Analytics
+              </button>
             </div>
 
             {/* Device toggle — only when on Preview tab */}
@@ -916,6 +945,111 @@ export default function SiteEditorPage() {
                 <div className="flex-1 flex items-center justify-center">
                   <p className="text-sm text-gray-400">
                     No preview URL yet. Click Deploy Preview to generate one.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Analytics panel */}
+          {rightTab === "analytics" && (
+            <div className="flex-1 overflow-y-auto bg-gray-50 p-5">
+              {analyticsLoading ? (
+                <div className="flex items-center justify-center h-32">
+                  <p className="text-sm text-gray-400">Loading analytics...</p>
+                </div>
+              ) : !analyticsData ? (
+                <div className="flex items-center justify-center h-32">
+                  <p className="text-sm text-gray-400">No analytics data yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-4 max-w-2xl">
+                  {/* Headline stats */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Page Views (30d)</p>
+                      <p className="text-2xl font-bold text-zing-dark">{analyticsData.pageviews.toLocaleString()}</p>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Visits (30d)</p>
+                      <p className="text-2xl font-bold text-zing-dark">{analyticsData.visits.toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  {/* Daily sparkline */}
+                  {analyticsData.daily.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-3">Daily Page Views</p>
+                      <div className="flex items-end gap-0.5 h-20">
+                        {(() => {
+                          const max = Math.max(...analyticsData.daily.map((d) => d.pageviews), 1);
+                          return analyticsData.daily.map((d) => (
+                            <div
+                              key={d.date}
+                              className="flex-1 bg-zing-teal/70 rounded-sm hover:bg-zing-teal transition-colors"
+                              style={{ height: `${Math.max(4, (d.pageviews / max) * 100)}%` }}
+                              title={`${d.date}: ${d.pageviews} views`}
+                            />
+                          ));
+                        })()}
+                      </div>
+                      <div className="flex justify-between mt-1.5">
+                        <span className="text-[10px] text-gray-400">{analyticsData.daily[0]?.date}</span>
+                        <span className="text-[10px] text-gray-400">{analyticsData.daily[analyticsData.daily.length - 1]?.date}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Countries + Referrers side by side */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {analyticsData.countries.length > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Top Countries</p>
+                        <div className="space-y-1.5">
+                          {analyticsData.countries.map((c) => (
+                            <div key={c.name} className="flex justify-between text-xs">
+                              <span className="text-gray-700 truncate">{c.name}</span>
+                              <span className="text-gray-500 font-medium shrink-0 ml-2">{c.count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {analyticsData.referrers.length > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Top Referrers</p>
+                        <div className="space-y-1.5">
+                          {analyticsData.referrers.map((r) => (
+                            <div key={r.host} className="flex justify-between text-xs">
+                              <span className="text-gray-700 truncate">{r.host || "Direct"}</span>
+                              <span className="text-gray-500 font-medium shrink-0 ml-2">{r.count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Devices */}
+                  {analyticsData.devices.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Devices</p>
+                      <div className="flex gap-4">
+                        {analyticsData.devices.map((d) => {
+                          const total = analyticsData.devices.reduce((s, x) => s + x.count, 0);
+                          return (
+                            <div key={d.type} className="flex items-center gap-1.5 text-xs">
+                              <span className="capitalize text-gray-700 font-medium">{d.type || "other"}</span>
+                              <span className="text-gray-400">{total > 0 ? Math.round((d.count / total) * 100) : 0}%</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-gray-400">
+                    Data from Cloudflare Analytics · {analyticsData.pageviews === 0 ? "No traffic yet — analytics will appear once visitors arrive." : "Last 30 days"}
                   </p>
                 </div>
               )}
