@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+
 
 interface Site {
   id: string;
@@ -439,12 +439,10 @@ export default function SiteEditorPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <PanelGroup direction="vertical" autoSaveId="pixel-vertical" className="flex-1 overflow-hidden">
-        <Panel defaultSize={80} minSize={35}>
-          <PanelGroup direction="horizontal" autoSaveId="pixel-horizontal" className="h-full">
-        {/* Left: Structured Fields */}
-        <Panel defaultSize={22} minSize={16} maxSize={45} className="h-full min-w-0">
-        <div className="h-full border-r border-gray-200 overflow-y-auto overflow-x-hidden p-5 bg-white min-w-0">
+      {/* Main content: left sidebar + right panel */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left: Site Details */}
+        <div className="w-72 shrink-0 h-full overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white p-5 min-w-0">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-zing-dark">Site Details</h2>
             <button
@@ -684,15 +682,12 @@ export default function SiteEditorPage() {
             </button>
           </div>
         </div>
-        </Panel>
 
-        <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-zing-teal active:bg-zing-teal transition-colors cursor-col-resize group">
-          <div className="w-0.5 h-8 bg-gray-300 group-hover:bg-zing-teal group-active:bg-zing-teal rounded-full mx-auto mt-[calc(50vh-1rem)]" />
-        </PanelResizeHandle>
+        {/* Divider */}
+        <div className="w-px bg-gray-200 shrink-0" />
 
         {/* Right: Tabbed Chat / Preview */}
-        <Panel defaultSize={78} minSize={40} className="h-full">
-        <div className="h-full flex flex-col bg-gray-50">
+        <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
           {/* Tab bar */}
           <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-3">
             <div className="flex">
@@ -926,7 +921,6 @@ export default function SiteEditorPage() {
               )}
             </div>
           )}
-        </div>
 
       {/* Bottom bar */}
       <div className="border-t border-gray-200 bg-white px-6 py-3 flex items-center justify-between shrink-0">
@@ -996,18 +990,12 @@ export default function SiteEditorPage() {
             🚀 Push to Production
           </button>
         </div>
-        </div>{/* closes h-full flex flex-col bg-gray-50 */}
-        </Panel>
-          </PanelGroup>
-        </Panel>
+        </div>
+        </div>
+      </div>
 
-        <PanelResizeHandle className="h-1.5 bg-gray-200 hover:bg-zing-teal active:bg-zing-teal transition-colors cursor-row-resize group">
-          <div className="h-0.5 w-8 bg-gray-300 group-hover:bg-zing-teal group-active:bg-zing-teal rounded-full mx-auto" />
-        </PanelResizeHandle>
-
-        {/* Bottom tabs: Deployments / Activity / Versions */}
-        <Panel defaultSize={20} minSize={8} maxSize={55} className="h-full">
-      <div className="h-full flex flex-col bg-gray-50 border-t border-gray-200">
+      {/* Bottom panel: Deployments / Activity / Versions */}
+      <div className="h-48 shrink-0 flex flex-col bg-gray-50 border-t border-gray-200">
         <div className="flex gap-1 px-6 pt-3 border-b border-gray-200">
           {(["deployments", "activity", "versions"] as const).map((tab) => (
             <button
@@ -1127,8 +1115,6 @@ export default function SiteEditorPage() {
           )}
         </div>
       </div>
-        </Panel>
-      </PanelGroup>
 
       {/* Archive confirmation modal */}
       {showArchiveModal && (
