@@ -75,7 +75,11 @@ export default function SiteEditorPage() {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [editLog, setEditLog] = useState<EditLogEntry[]>([]);
-  const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions">("deployments");
+  const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions" | "locations">("deployments");
+  const [locations, setLocations] = useState<Array<{ slug: string; label: string; url: string }>>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
+  const [locationPreview, setLocationPreview] = useState<string | null>(null);
 
   // Custom domain
   const [domainInput, setDomainInput] = useState("");
@@ -203,6 +207,21 @@ export default function SiteEditorPage() {
       if (res.ok) setAnalyticsData(await res.json());
     } catch { /* ignore */ } finally {
       setAnalyticsLoading(false);
+    }
+  }
+
+  async function fetchLocations() {
+    if (locationsLoading) return;
+    setLocationsLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/locations`);
+      if (res.ok) {
+        const data = await res.json();
+        setLocations(data.locations ?? []);
+        setLocationsMeta({ indexUrl: data.indexUrl, total: data.total });
+      }
+    } catch { /* ignore */ } finally {
+      setLocationsLoading(false);
     }
   }
 
@@ -721,7 +740,7 @@ export default function SiteEditorPage() {
                 AI Editor
               </button>
               <button
-                onClick={() => setRightTab("preview")}
+                onClick={() => { setRightTab("preview"); setLocationPreview(null); }}
                 className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                   rightTab === "preview"
                     ? "border-zing-teal text-zing-teal"
@@ -891,8 +910,8 @@ export default function SiteEditorPage() {
                   <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center">
                     {deviceView === "desktop" ? (
                       <iframe
-                        key={`${previewKey}-desktop`}
-                        src={blobUrl ?? site.preview_url ?? ""}
+                        key={`${previewKey}-desktop-${locationPreview ?? ""}`}
+                        src={locationPreview ?? blobUrl ?? site.preview_url ?? ""}
                         className="w-full h-full border-0 bg-white"
                         style={{ minHeight: "100%" }}
                         title="Site Preview"
@@ -1120,13 +1139,17 @@ export default function SiteEditorPage() {
         </div>
       </div>
 
-      {/* Bottom panel: Deployments / Activity / Versions */}
+      {/* Bottom panel: Deployments / Activity / Versions / Locations */}
       <div className="h-48 shrink-0 flex flex-col bg-white border-t border-gray-200">
         <div className="flex gap-0.5 px-5 border-b border-gray-200">
-          {(["deployments", "activity", "versions"] as const).map((tab) => (
+          {(["deployments", "activity", "versions", "locations"] as const).map((tab) => (
             <button
               key={tab}
-              onClick={() => { setBottomTab(tab); if (tab === "versions") fetchVersions(); }}
+              onClick={() => {
+                setBottomTab(tab);
+                if (tab === "versions") fetchVersions();
+                if (tab === "locations") fetchLocations();
+              }}
               className={`px-3 py-2.5 text-[11px] font-medium capitalize transition-colors flex items-center gap-1.5 ${
                 bottomTab === tab
                   ? "text-zing-teal border-b-2 border-zing-teal"
@@ -1140,6 +1163,10 @@ export default function SiteEditorPage() {
               {tab === "activity" && editLog.length > 0 && (
                 <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "activity" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{editLog.length}</span>
               )}
+              {tab === "locations" && locations.length > 0 && (
+                <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "locations" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{locations.length}</span>
+              )}
+
             </button>
           ))}
         </div>
@@ -1236,6 +1263,41 @@ export default function SiteEditorPage() {
                     )}
                   </div>
                 ))}
+              </div>
+            )
+          )}
+
+          {/* Locations panel */}
+          {bottomTab === "locations" && (
+            locationsLoading ? (
+              <p className="text-xs text-gray-400">Loading location pages...</p>
+            ) : locations.length === 0 ? (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400">No location pages generated yet.</p>
+                <p className="text-xs text-gray-400">Run: <code className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">node scripts/generate-locations.js --site {siteId} --city &quot;City&quot; --state ST</code></p>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">{locations.length} location pages</span>
+                  {locationsMeta?.indexUrl && (
+                    <a href={locationsMeta.indexUrl} target="_blank" rel="noopener" className="text-[10px] text-zing-teal hover:underline">View all →</a>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {locations.map((loc) => (
+                    <div key={loc.slug} className="flex items-center justify-between gap-2 py-0.5">
+                      <button
+                        onClick={() => { setLocationPreview(loc.url); setRightTab("preview"); }}
+                        className="text-xs text-gray-700 hover:text-zing-teal truncate text-left"
+                        title={loc.label}
+                      >
+                        {loc.label}
+                      </button>
+                      <a href={loc.url} target="_blank" rel="noopener" className="text-[10px] text-gray-300 hover:text-zing-teal shrink-0">↗</a>
+                    </div>
+                  ))}
+                </div>
               </div>
             )
           )}
