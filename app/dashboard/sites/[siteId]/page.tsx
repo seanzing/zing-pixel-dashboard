@@ -443,8 +443,8 @@ export default function SiteEditorPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Site Details */}
         <div className="w-72 shrink-0 h-full overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white p-5 min-w-0">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-zing-dark">Site Details</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-zing-dark">Site Details</h2>
             <button
               onClick={handleExtract}
               disabled={extracting}
@@ -464,7 +464,7 @@ export default function SiteEditorPage() {
             </button>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <Field
               label="Business Name"
               value={site.business_name}
@@ -492,14 +492,14 @@ export default function SiteEditorPage() {
               onChange={(v) => setSite({ ...site, address: v })}
             />
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">
                 Hours
               </label>
               <textarea
                 value={site.hours ?? ""}
                 onChange={(e) => setSite({ ...site, hours: e.target.value })}
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors resize-none"
               />
             </div>
             <Field
@@ -689,24 +689,24 @@ export default function SiteEditorPage() {
         {/* Right: Tabbed Chat / Preview */}
         <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
           {/* Tab bar */}
-          <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-3">
+          <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-4">
             <div className="flex">
               <button
                 onClick={() => setRightTab("chat")}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                   rightTab === "chat"
                     ? "border-zing-teal text-zing-teal"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
+                    : "border-transparent text-gray-400 hover:text-gray-600"
                 }`}
               >
                 AI Editor
               </button>
               <button
                 onClick={() => setRightTab("preview")}
-                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                   rightTab === "preview"
                     ? "border-zing-teal text-zing-teal"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
+                    : "border-transparent text-gray-400 hover:text-gray-600"
                 }`}
               >
                 Preview
@@ -788,22 +788,22 @@ export default function SiteEditorPage() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="p-4 border-t border-gray-200 bg-white">
-                <div className="flex gap-2">
+              <div className="px-4 py-3 border-t border-gray-200 bg-white">
+                <div className="flex gap-2 items-center">
                   <input
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleChatSend()}
                     placeholder="Describe a change..."
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors"
                   />
                   <button
                     onClick={handleChatSend}
                     disabled={chatLoading || !chatInput.trim()}
-                    className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+                    className="bg-zing-teal text-white px-4 py-2 rounded text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50 shrink-0"
                   >
-                    Send
+                    {chatLoading ? "..." : "Send"}
                   </button>
                 </div>
               </div>
@@ -923,27 +923,19 @@ export default function SiteEditorPage() {
           )}
 
       {/* Bottom bar */}
-      <div className="border-t border-gray-200 bg-white px-6 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          {site.preview_url && (
+      <div className="border-t border-gray-200 bg-white px-5 py-2.5 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          {site.preview_url ? (
             <a
               href={site.preview_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-zing-teal hover:underline"
+              className="text-xs text-zing-teal hover:underline truncate max-w-[220px]"
             >
               {site.preview_url}
             </a>
-          )}
-          {site.preview_url && (
-            <a
-              href={site.preview_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 transition-colors"
-            >
-              Open Preview
-            </a>
+          ) : (
+            <span className="text-xs text-gray-400">No preview yet</span>
           )}
         </div>
 
@@ -978,16 +970,16 @@ export default function SiteEditorPage() {
           <button
             onClick={() => handleDeploy("preview")}
             disabled={deploying || deployState === "in_progress" || deployState === "queued"}
-            className="bg-gray-100 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+            className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
           >
-            Deploy Preview
+            Preview
           </button>
           <button
             onClick={() => handleDeploy("production")}
             disabled={deploying || deployState === "in_progress" || deployState === "queued"}
-            className="bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+            className="bg-zing-teal text-white px-4 py-1.5 rounded text-xs font-semibold hover:bg-zing-dark transition-colors disabled:opacity-50"
           >
-            🚀 Push to Production
+            Push to Production
           </button>
         </div>
         </div>
@@ -995,30 +987,30 @@ export default function SiteEditorPage() {
       </div>
 
       {/* Bottom panel: Deployments / Activity / Versions */}
-      <div className="h-48 shrink-0 flex flex-col bg-gray-50 border-t border-gray-200">
-        <div className="flex gap-1 px-6 pt-3 border-b border-gray-200">
+      <div className="h-48 shrink-0 flex flex-col bg-white border-t border-gray-200">
+        <div className="flex gap-0.5 px-5 border-b border-gray-200">
           {(["deployments", "activity", "versions"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => { setBottomTab(tab); if (tab === "versions") fetchVersions(); }}
-              className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+              className={`px-3 py-2.5 text-[11px] font-medium capitalize transition-colors flex items-center gap-1.5 ${
                 bottomTab === tab
-                  ? "text-zing-teal border-b-2 border-zing-teal -mb-px bg-white rounded-t"
-                  : "text-gray-500 hover:text-gray-700"
+                  ? "text-zing-teal border-b-2 border-zing-teal"
+                  : "text-gray-400 hover:text-gray-600 border-b-2 border-transparent"
               }`}
             >
               {tab}
               {tab === "deployments" && deployments.length > 0 && (
-                <span className="ml-1 text-gray-400">({deployments.length})</span>
+                <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "deployments" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{deployments.length}</span>
               )}
               {tab === "activity" && editLog.length > 0 && (
-                <span className="ml-1 text-gray-400">({editLog.length})</span>
+                <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "activity" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{editLog.length}</span>
               )}
             </button>
           ))}
         </div>
 
-        <div className="px-6 py-3 flex-1 overflow-y-auto">
+        <div className="px-5 py-2.5 flex-1 overflow-y-auto text-xs">
           {bottomTab === "deployments" && (
             deployments.length === 0 ? (
               <p className="text-xs text-gray-400">No deployments yet.</p>
@@ -1162,14 +1154,14 @@ function Field({
 }) {
   return (
     <div className="min-w-0">
-      <label className="block text-xs font-medium text-gray-500 mb-1 truncate" title={label}>
+      <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 truncate" title={label}>
         {label}
       </label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full min-w-0 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+        className="w-full min-w-0 px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors"
       />
       {helpText && (
         <p className="text-xs text-gray-400 mt-0.5 break-words">{helpText}</p>
