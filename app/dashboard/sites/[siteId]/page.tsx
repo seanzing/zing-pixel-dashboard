@@ -439,11 +439,11 @@ export default function SiteEditorPage() {
 
   return (
     <div className="flex flex-col h-screen">
-      <PanelGroup direction="vertical" autoSaveId="pixel-vertical">
+      <PanelGroup direction="vertical" autoSaveId="pixel-vertical" className="flex-1 overflow-hidden">
         <Panel defaultSize={80} minSize={35}>
-          <PanelGroup direction="horizontal" autoSaveId="pixel-horizontal">
+          <PanelGroup direction="horizontal" autoSaveId="pixel-horizontal" className="h-full">
         {/* Left: Structured Fields */}
-        <Panel defaultSize={22} minSize={16} maxSize={45}>
+        <Panel defaultSize={22} minSize={16} maxSize={45} className="h-full">
         <div className="h-full border-r border-gray-200 overflow-y-auto p-5 bg-white">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-zing-dark">Site Details</h2>
@@ -691,7 +691,7 @@ export default function SiteEditorPage() {
         </PanelResizeHandle>
 
         {/* Right: Tabbed Chat / Preview */}
-        <Panel defaultSize={78} minSize={40}>
+        <Panel defaultSize={78} minSize={40} className="h-full">
         <div className="h-full flex flex-col bg-gray-50">
           {/* Tab bar */}
           <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-3">
@@ -1006,7 +1006,7 @@ export default function SiteEditorPage() {
         </PanelResizeHandle>
 
         {/* Bottom tabs: Deployments / Activity / Versions */}
-        <Panel defaultSize={20} minSize={8} maxSize={55}>
+        <Panel defaultSize={20} minSize={8} maxSize={55} className="h-full">
       <div className="h-full flex flex-col bg-gray-50 border-t border-gray-200">
         <div className="flex gap-1 px-6 pt-3 border-b border-gray-200">
           {(["deployments", "activity", "versions"] as const).map((tab) => (
