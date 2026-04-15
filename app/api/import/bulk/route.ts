@@ -45,12 +45,35 @@ export async function POST(request: Request) {
 
     for (const siteId of siteIds) {
       try {
-        // Read HTML from GitHub
-        const file = await getFile(`${siteId}/index.html`);
-        if (!file) {
-          results.push({ id: siteId, status: "error", error: "index.html not found in GitHub" });
+        // Try GitHub first, then fall back to demo catalog
+        let htmlContent: string | null = null;
+        const githubFile = await getFile(`${siteId}/index.html`);
+        if (githubFile) {
+          htmlContent = githubFile.content;
+        } else {
+          // Fetch from demo server (yourwebsiteexample.com/{id}/)
+          const demoRes = await fetch(`https://yourwebsiteexample.com/${siteId}/`, {
+            headers: { Accept: "text/html" },
+          });
+          if (demoRes.ok) {
+            htmlContent = await demoRes.text();
+            // Push HTML to zing-sites GitHub repo so deploy pipeline can pick it up
+            const { writeFile } = await import("@/lib/github");
+            await writeFile(
+              `${siteId}/index.html`,
+              htmlContent,
+              `import: add ${siteId} from demo catalog`
+            );
+          }
+        }
+
+        if (!htmlContent) {
+          results.push({ id: siteId, status: "error", error: "HTML not found in GitHub or demo catalog" });
           continue;
         }
+
+        // Swap the file reference for extraction
+        const file = { content: htmlContent };
 
         // Extract business fields via Haiku
         const extracted = await extractFromHtml(file.content);

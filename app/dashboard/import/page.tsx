@@ -17,21 +17,23 @@ interface ImportResult {
 
 export default function ImportPage() {
   const [available, setAvailable] = useState<AvailableSite[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [ownerEmail, setOwnerEmail] = useState("publishing@zing-work.com");
   const [results, setResults] = useState<ImportResult[]>([]);
-  const [stats, setStats] = useState<{ total: number; registered: number } | null>(null);
+  const [stats, setStats] = useState<{ totalAvailable: number; totalInCatalog: number; registered: number } | null>(null);
+  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const router = useRouter();
 
-  async function fetchAvailable() {
+  async function fetchAvailable(q = "") {
     setLoading(true);
     setResults([]);
     try {
-      const res = await fetch("/api/import/available");
+      const res = await fetch(`/api/import/available${q ? `?search=${encodeURIComponent(q)}` : ""}`);
       const data = await res.json();
-      setAvailable((data.available ?? []).map((id: string) => ({ id, selected: true })));
-      setStats({ total: data.total, registered: data.registered });
+      setAvailable((data.available ?? []).map((id: string) => ({ id, selected: false })));
+      setStats({ totalAvailable: data.totalAvailable, totalInCatalog: data.totalInCatalog, registered: data.registered });
     } catch {
       // ignore
     } finally {
@@ -39,8 +41,13 @@ export default function ImportPage() {
     }
   }
 
+  // Don't auto-load — 17k sites, let user search first
   useEffect(() => {
-    fetchAvailable();
+    // Load an empty search to show stats without sites
+    fetch("/api/import/available?search=NOMATCH_INIT__")
+      .then(r => r.json())
+      .then(data => setStats({ totalAvailable: data.totalAvailable ?? 0, totalInCatalog: data.totalInCatalog ?? 0, registered: data.registered ?? 0 }))
+      .catch(() => {});
   }, []);
 
   function toggleAll(checked: boolean) {
@@ -87,14 +94,14 @@ export default function ImportPage() {
           <div>
             <h1 className="text-sm font-semibold text-zing-dark">Import Sites</h1>
             <p className="text-xs text-gray-400 mt-0.5">
-              Sites found in GitHub but not yet registered in Pixel
+              Search the demo catalog ({stats?.totalInCatalog?.toLocaleString() ?? "…"} sites) to find and import into Pixel
             </p>
           </div>
           {stats && (
             <div className="flex items-center gap-4 text-xs text-gray-500">
-              <span><span className="font-semibold text-zing-dark">{stats.total}</span> in GitHub</span>
-              <span><span className="font-semibold text-green-600">{stats.registered}</span> registered</span>
-              <span><span className="font-semibold text-amber-600">{available.length}</span> available</span>
+              <span><span className="font-semibold text-zing-dark">{stats.totalInCatalog?.toLocaleString()}</span> in catalog</span>
+              <span><span className="font-semibold text-green-600">{stats.registered}</span> in Pixel</span>
+              <span><span className="font-semibold text-amber-600">{stats.totalAvailable?.toLocaleString()}</span> available</span>
             </div>
           )}
         </div>
@@ -107,30 +114,52 @@ export default function ImportPage() {
             <div className="flex items-center justify-center h-32">
               <p className="text-sm text-gray-400">Scanning GitHub...</p>
             </div>
-          ) : available.length === 0 ? (
+          ) : available.length === 0 && !search ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-3">
+              <p className="text-sm font-medium text-gray-500">Search to find sites from the demo catalog</p>
+              <p className="text-xs text-gray-400">Try a business name, vertical, or partial site ID</p>
+              <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); fetchAvailable(searchInput); }} className="flex gap-2 mt-1">
+                <input
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  placeholder="e.g. roofing, denver, plumb..."
+                  className="px-3 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal w-64"
+                  autoFocus
+                />
+                <button type="submit" className="bg-zing-teal text-white px-4 py-1.5 rounded text-xs font-semibold hover:bg-zing-dark transition-colors">
+                  Search
+                </button>
+              </form>
+            </div>
+          ) : available.length === 0 && search ? (
             <div className="flex flex-col items-center justify-center h-48 gap-2">
-              <p className="text-sm font-medium text-gray-500">All GitHub sites are registered</p>
-              <p className="text-xs text-gray-400">Nothing to import right now.</p>
-              <button
-                onClick={() => router.push("/dashboard")}
-                className="mt-3 text-xs text-zing-teal hover:underline"
-              >
-                Back to Sites
-              </button>
+              <p className="text-sm font-medium text-gray-500">No results for &ldquo;{search}&rdquo;</p>
+              <button onClick={() => { setSearch(""); setSearchInput(""); setAvailable([]); }} className="text-xs text-zing-teal hover:underline">Clear search</button>
             </div>
           ) : (
             <>
               {/* Toolbar */}
-              <div className="sticky top-0 bg-gray-50 border-b border-gray-200 px-6 py-2.5 flex items-center gap-4">
-                <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <div className="sticky top-0 bg-gray-50 border-b border-gray-200 px-6 py-2.5 flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer shrink-0">
                   <input
                     type="checkbox"
-                    checked={selectedCount === available.length}
+                    checked={selectedCount === available.length && available.length > 0}
                     onChange={(e) => toggleAll(e.target.checked)}
                     className="rounded border-gray-300"
                   />
-                  Select all ({available.length})
+                  Select all ({available.length}{stats && stats.totalAvailable > available.length ? ` of ${stats.totalAvailable.toLocaleString()}` : ""})
                 </label>
+
+                <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); fetchAvailable(searchInput); }} className="flex gap-1.5">
+                  <input
+                    value={searchInput}
+                    onChange={e => setSearchInput(e.target.value)}
+                    placeholder="Search sites..."
+                    className="px-2.5 py-1 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-zing-teal w-44"
+                  />
+                  <button type="submit" className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-xs font-medium hover:bg-gray-200">Search</button>
+                  {search && <button type="button" onClick={() => { setSearch(""); setSearchInput(""); setAvailable([]); }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>}
+                </form>
 
                 <div className="flex items-center gap-2 ml-auto">
                   <label className="text-xs text-gray-500">Default owner email</label>
