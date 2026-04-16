@@ -85,30 +85,52 @@ function transformHtml(
 ): string {
   const $ = cheerio.load(html, { xmlMode: false });
 
-  // Inject <base href="/"> so relative HTML attr paths (src="./logo.jpg") resolve from root
-  if (!$("base").length) {
-    $("head").prepend('<base href="/">');
-  } else {
-    $("base").attr("href", "/");
-  }
+  // ── Fix all relative asset paths ──────────────────────────────────────────
+  // Location pages live at /locations/{slug}/ — all relative paths break.
+  // We rewrite them explicitly rather than relying on <base> (unreliable in iframes).
 
-  // Rewrite relative url() refs in <style> blocks — <base> doesn't affect CSS
-  // e.g. url('./hero.jpg') → url('/hero.jpg'), url('hero.jpg') → url('/hero.jpg')
+  const makeAbsolute = (val: string) => {
+    if (!val) return val;
+    // Already absolute or data URI or anchor
+    if (/^(https?:|\/\/|data:|#|mailto:|tel:)/.test(val)) return val;
+    // Strip leading ./ and ensure leading /
+    return "/" + val.replace(/^\.\//, "");
+  };
+
+  // img src, video src, source src, audio src
+  $("img, video, audio, source").each((_, el) => {
+    const src = $(el).attr("src");
+    if (src) $(el).attr("src", makeAbsolute(src));
+    const srcset = $(el).attr("srcset");
+    if (srcset) {
+      $(el).attr("srcset", srcset.replace(/([^,\s]+)(\s[^,]+)?/g, (m, url, desc) =>
+        makeAbsolute(url) + (desc ?? "")
+      ));
+    }
+  });
+
+  // link href (favicons, preloads — not page links)
+  $("link[rel='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon'], link[rel='preload']").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href) $(el).attr("href", makeAbsolute(href));
+  });
+
+  // CSS url() in <style> blocks
   $("style").each((_, el) => {
     const original = $(el).html() ?? "";
     const fixed = original.replace(
-      /url\(\s*['"]?((?!https?:\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
-      (_match: string, p1: string) => `url('/${p1.replace(/^\.\//, "")}')`
+      /url\(\s*['"]?((?!https?:\/\/|\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
+      (_m: string, p1: string) => `url('${makeAbsolute(p1)}')`
     );
     if (fixed !== original) $(el).html(fixed);
   });
 
-  // Rewrite relative url() in inline style= attributes too
+  // CSS url() in inline style attributes
   $("[style]").each((_, el) => {
     const original = $(el).attr("style") ?? "";
     const fixed = original.replace(
-      /url\(\s*['"]?((?!https?:\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
-      (_match: string, p1: string) => `url('/${p1.replace(/^\.\//, "")}')`
+      /url\(\s*['"]?((?!https?:\/\/|\/\/|data:|\/|#)[^'")]+)['"]?\s*\)/g,
+      (_m: string, p1: string) => `url('${makeAbsolute(p1)}')`
     );
     if (fixed !== original) $(el).attr("style", fixed);
   });
