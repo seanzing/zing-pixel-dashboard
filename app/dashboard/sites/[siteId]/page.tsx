@@ -84,6 +84,14 @@ export default function SiteEditorPage() {
   // Concurrent edit conflict
   const [conflictError, setConflictError] = useState<string | null>(null);
 
+  // Click-to-replace image state
+  const [selectedImg, setSelectedImg] = useState<{ index: number; src: string } | null>(null);
+  const [imgReplaceFile, setImgReplaceFile] = useState<File | null>(null);
+  const [imgReplacing, setImgReplacing] = useState(false);
+  const [imgReplaceError, setImgReplaceError] = useState("");
+  const [imgReplaceSuccess, setImgReplaceSuccess] = useState(false);
+  const imgReplaceInputRef = useRef<HTMLInputElement>(null);
+
   // Multi-page state
   type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
   const [pages, setPages] = useState<PageEntry[]>([]);
@@ -136,11 +144,62 @@ export default function SiteEditorPage() {
   const domainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin
-  function buildBlobPreview(html: string, siteId: string): string {
+  function buildBlobPreview(html: string, siteId: string, interactive = false): string {
     const base = `<base href="https://${siteId}.pages.dev/">`;
+    const interactionScript = interactive ? `
+<script>
+(function() {
+  function init() {
+    document.querySelectorAll('img').forEach(function(img, i) {
+      img.style.cursor = 'pointer';
+      img.style.transition = 'outline 0.12s, box-shadow 0.12s';
+      img.setAttribute('data-pixel-index', i);
+      img.addEventListener('mouseenter', function() {
+        if (!img.dataset.pixelSelected) {
+          img.style.outline = '2px dashed #2a7c6f';
+          img.style.outlineOffset = '3px';
+        }
+      });
+      img.addEventListener('mouseleave', function() {
+        if (!img.dataset.pixelSelected) {
+          img.style.outline = '';
+          img.style.outlineOffset = '';
+        }
+      });
+      img.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.querySelectorAll('img').forEach(function(im) {
+          im.style.outline = '';
+          im.style.outlineOffset = '';
+          im.style.boxShadow = '';
+          delete im.dataset.pixelSelected;
+        });
+        img.style.outline = '3px solid #2a7c6f';
+        img.style.outlineOffset = '3px';
+        img.style.boxShadow = '0 0 0 6px rgba(42,124,111,0.15)';
+        img.dataset.pixelSelected = '1';
+        window.parent.postMessage({
+          type: 'PIXEL_IMG_CLICK',
+          index: i,
+          src: img.getAttribute('src') || '',
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+        }, '*');
+      });
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>` : "";
+    const inject = base + interactionScript;
     return html.includes("<head>")
-      ? html.replace("<head>", `<head>${base}`)
-      : base + html;
+      ? html.replace("<head>", `<head>${inject}`)
+      : inject + html;
   }
 
   function revokeBlobUrl() {
@@ -262,6 +321,52 @@ export default function SiteEditorPage() {
       if (res.ok) setAnalyticsData(await res.json());
     } catch { /* ignore */ } finally {
       setAnalyticsLoading(false);
+    }
+  }
+
+  async function loadInteractivePreview() {
+    const res = await fetch(`/api/sites/${siteId}/raw?page=${currentPage}`);
+    if (!res.ok) return;
+    const { html } = await res.json();
+    revokeBlobUrl();
+    const preview = buildBlobPreview(html, siteId, true);
+    const blob = new Blob([preview], { type: "text/html" });
+    setBlobUrl(URL.createObjectURL(blob));
+    setPreviewKey((k) => k + 1);
+  }
+
+  async function handleImageReplace() {
+    if (!imgReplaceFile || selectedImg === null) return;
+    setImgReplacing(true);
+    setImgReplaceError("");
+    try {
+      const form = new FormData();
+      form.append("file", imgReplaceFile);
+      form.append("page", currentPage);
+      form.append("imgIndex", String(selectedImg.index));
+
+      const res = await fetch(`/api/sites/${siteId}/images/upload`, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setImgReplaceError(data.error || "Upload failed");
+        return;
+      }
+      // Rebuild the blob preview with the updated HTML (interactive)
+      revokeBlobUrl();
+      const preview = buildBlobPreview(data.html, siteId, true);
+      const blob = new Blob([preview], { type: "text/html" });
+      setBlobUrl(URL.createObjectURL(blob));
+      setPreviewKey((k) => k + 1);
+      setImgReplaceSuccess(true);
+      setSelectedImg(null);
+      setImgReplaceFile(null);
+      // Trigger deploy (commit already happened in upload API)
+      if (data.commitSha) pollDeployStatus(data.commitSha);
+      setTimeout(() => setImgReplaceSuccess(false), 3000);
+    } catch (err) {
+      setImgReplaceError((err as Error).message);
+    } finally {
+      setImgReplacing(false);
     }
   }
 
@@ -607,6 +712,20 @@ export default function SiteEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
+  // postMessage listener for interactive preview image clicks
+  useEffect(() => {
+    function handler(e: MessageEvent) {
+      if (e.data?.type === "PIXEL_IMG_CLICK") {
+        setSelectedImg({ index: e.data.index, src: e.data.src ?? "" });
+        setImgReplaceFile(null);
+        setImgReplaceError("");
+        setImgReplaceSuccess(false);
+      }
+    }
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
   // Re-fetch chat history when page changes (chat is scoped per page)
   useEffect(() => {
     if (!siteId) return;
@@ -632,7 +751,7 @@ export default function SiteEditorPage() {
     const data = await res.json();
     if (data.html) {
       revokeBlobUrl();
-      const preview = buildBlobPreview(data.html, siteId);
+      const preview = buildBlobPreview(data.html, siteId, true);
       const blob = new Blob([preview], { type: "text/html" });
       setBlobUrl(URL.createObjectURL(blob));
       setRightTab("preview");
@@ -686,7 +805,7 @@ export default function SiteEditorPage() {
       // Instant preview — no deploy needed
       if (data.html) {
         revokeBlobUrl();
-        const preview = buildBlobPreview(data.html, siteId);
+        const preview = buildBlobPreview(data.html, siteId, true);
         const blob = new Blob([preview], { type: "text/html" });
         const url = URL.createObjectURL(blob);
         setBlobUrl(url);
@@ -1273,7 +1392,12 @@ export default function SiteEditorPage() {
                 AI Editor
               </button>
               <button
-                onClick={() => { setRightTab("preview"); setLocationPreview(null); }}
+                onClick={() => {
+                  setRightTab("preview");
+                  setLocationPreview(null);
+                  // Always load interactive blob preview for same-origin postMessage support
+                  if (!blobUrl) loadInteractivePreview();
+                }}
                 className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                   rightTab === "preview"
                     ? "border-zing-teal text-zing-teal"
@@ -1440,7 +1564,73 @@ export default function SiteEditorPage() {
                     </div>
                   </div>
                   {/* Device frame + iframe */}
-                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center">
+                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center relative">
+                    {/* Click-to-replace hint when in interactive mode */}
+                    {blobUrl && !selectedImg && (
+                      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                        <span className="bg-zing-dark/80 text-white text-[11px] px-3 py-1.5 rounded-full shadow backdrop-blur-sm">
+                          🖼 Click any image to replace it
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Image replace overlay */}
+                    {selectedImg && (
+                      <div className="absolute bottom-4 right-4 z-20 bg-white rounded-xl shadow-2xl border border-gray-200 w-72 overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+                          <div>
+                            <p className="text-xs font-semibold text-zing-dark">Replace Image</p>
+                            <p className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[180px]">{selectedImg.src}</p>
+                          </div>
+                          <button onClick={() => setSelectedImg(null)} className="text-gray-400 hover:text-gray-600 text-sm leading-none ml-2 shrink-0">✕</button>
+                        </div>
+
+                        {/* Current image preview */}
+                        <div className="px-4 pt-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={selectedImg.src.startsWith("/") ? `https://${siteId}.pages.dev${selectedImg.src}` : selectedImg.src}
+                            alt="Current image"
+                            className="w-full h-28 object-cover rounded-lg border border-gray-100 bg-gray-50"
+                          />
+                        </div>
+
+                        <div className="px-4 pb-4 pt-3 space-y-2">
+                          <label className="block">
+                            <input
+                              ref={imgReplaceInputRef}
+                              type="file"
+                              accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                              onChange={e => setImgReplaceFile(e.target.files?.[0] ?? null)}
+                              className="hidden"
+                            />
+                            <button
+                              onClick={() => imgReplaceInputRef.current?.click()}
+                              className="w-full px-3 py-2 border-2 border-dashed border-gray-200 rounded-lg text-xs text-gray-500 hover:border-zing-teal hover:text-zing-teal transition-colors text-center"
+                            >
+                              {imgReplaceFile ? `✓ ${imgReplaceFile.name}` : "Choose replacement image"}
+                            </button>
+                          </label>
+
+                          {imgReplaceError && <p className="text-[11px] text-red-500">{imgReplaceError}</p>}
+
+                          <button
+                            onClick={handleImageReplace}
+                            disabled={!imgReplaceFile || imgReplacing}
+                            className="w-full bg-zing-teal text-white px-3 py-2 rounded-lg text-xs font-semibold hover:bg-zing-dark transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {imgReplacing
+                              ? <><span className="animate-spin">⟳</span> Uploading...</>
+                              : imgReplaceSuccess
+                                ? "✓ Replaced!"
+                                : "Upload & Replace"
+                            }
+                          </button>
+                          <p className="text-[10px] text-gray-400 text-center">Saves to GitHub and triggers a deploy</p>
+                        </div>
+                      </div>
+                    )}
+
                     {deviceView === "desktop" ? (
                       <iframe
                         key={`${previewKey}-desktop-${locationPreview ?? ""}`}
