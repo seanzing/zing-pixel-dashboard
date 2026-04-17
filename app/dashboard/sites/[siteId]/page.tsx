@@ -98,6 +98,9 @@ export default function SiteEditorPage() {
   const [imgLoading, setImgLoading] = useState(false);
   const [imgSaving, setImgSaving] = useState(false);
   const [imgSaved, setImgSaved] = useState(false);
+  const [imgGenerating, setImgGenerating] = useState(false);
+  const [imgGenProgress, setImgGenProgress] = useState<{ done: number; total: number } | null>(null);
+  const [imgGeneratingIndex, setImgGeneratingIndex] = useState<number | null>(null);
 
   // Generate locations modal
   const [showLocModal, setShowLocModal] = useState(false);
@@ -279,6 +282,56 @@ export default function SiteEditorPage() {
       const data = await res.json();
       if (data.images) { setImgList(data.images); setImgSha(data.sha); }
     } finally { setImgLoading(false); }
+  }
+
+  async function generateAltText(indices?: number[]) {
+    setImgGenerating(true);
+    setImgGenProgress(null);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/images/generate-alt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(indices?.length ? { indices } : {}),
+      });
+      if (!res.body) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const eventLine = block.split("\n").find(l => l.startsWith("event:"));
+          const dataLine = block.split("\n").find(l => l.startsWith("data:"));
+          if (!eventLine || !dataLine) continue;
+          const event = eventLine.replace("event:", "").trim();
+          const payload = JSON.parse(dataLine.replace("data:", "").trim());
+
+          if (event === "start") {
+            setImgGenProgress({ done: 0, total: payload.total });
+          } else if (event === "alt") {
+            setImgGeneratingIndex(payload.index);
+            if (!payload.skipped && payload.alt) {
+              setImgList(prev => prev.map(img =>
+                img.index === payload.index ? { ...img, alt: payload.alt } : img
+              ));
+            }
+            setImgGenProgress(prev => prev ? { ...prev, done: prev.done + 1 } : null);
+          } else if (event === "done") {
+            setImgGenProgress(prev => prev ? { ...prev, done: prev.total } : null);
+            setImgGeneratingIndex(null);
+          }
+        }
+      }
+    } finally {
+      setImgGenerating(false);
+      setImgGeneratingIndex(null);
+    }
   }
 
   async function saveImages() {
@@ -986,13 +1039,31 @@ export default function SiteEditorPage() {
           {/* ── IMAGES TAB ── */}
           {leftTab === "images" && (
             <div>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2">
                 <h2 className="text-sm font-semibold text-zing-dark">Image Alt Text</h2>
-                <button onClick={fetchImages} disabled={imgLoading} className="text-xs text-zing-teal hover:text-zing-dark disabled:opacity-50">
-                  {imgLoading ? "Loading..." : "↺ Refresh"}
+                <button onClick={fetchImages} disabled={imgLoading || imgGenerating} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40">
+                  {imgLoading ? "Loading..." : "↺"}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mb-4">Alt text improves accessibility and image SEO. Describe what's in each photo.</p>
+              <p className="text-xs text-gray-400 mb-3">Alt text improves accessibility and image SEO.</p>
+
+              {/* AI Generate All button */}
+              {imgList.length > 0 && (
+                <button
+                  onClick={() => generateAltText()}
+                  disabled={imgGenerating || imgLoading}
+                  className="w-full mb-4 flex items-center justify-center gap-2 bg-zing-dark text-white px-4 py-2 rounded-md text-xs font-semibold hover:bg-black transition-colors disabled:opacity-50"
+                >
+                  {imgGenerating ? (
+                    <>
+                      <span className="animate-spin text-sm">⟳</span>
+                      {imgGenProgress ? `${imgGenProgress.done}/${imgGenProgress.total} images...` : "Starting..."}
+                    </>
+                  ) : (
+                    <><span>✨</span> AI Generate All</>
+                  )}
+                </button>
+              )}
 
               {imgLoading && <p className="text-xs text-gray-400">Loading images...</p>}
 
@@ -1002,29 +1073,41 @@ export default function SiteEditorPage() {
 
               {!imgLoading && imgList.length > 0 && (
                 <div className="space-y-3">
-                  {imgList.map((img) => (
-                    <div key={img.index} className="bg-gray-50 border border-gray-200 rounded-lg p-2.5">
+                  {imgList.map((img) => {
+                    const isGeneratingThis = imgGeneratingIndex === img.index;
+                    return (
+                    <div key={img.index} className={`bg-gray-50 border rounded-lg p-2.5 transition-colors ${isGeneratingThis ? "border-zing-teal/50 bg-zing-teal/5" : "border-gray-200"}`}>
                       <div className="flex gap-2.5 mb-2">
-                        {/* Thumbnail */}
                         <img
                           src={img.previewUrl}
-                          alt={img.alt || ""}
+                          alt=""
                           className="w-12 h-12 object-cover rounded shrink-0 bg-gray-200"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                         />
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold text-gray-500 truncate">{img.context}</p>
                           <p className="text-[10px] text-gray-300 truncate">{img.src}</p>
                         </div>
+                        {/* Per-image regenerate */}
+                        <button
+                          onClick={() => generateAltText([img.index])}
+                          disabled={imgGenerating}
+                          title="Regenerate with AI"
+                          className="text-gray-300 hover:text-zing-teal disabled:opacity-30 transition-colors shrink-0 text-sm"
+                        >
+                          {isGeneratingThis ? <span className="animate-spin inline-block">⟳</span> : "✨"}
+                        </button>
                       </div>
                       <input
                         value={img.alt}
                         onChange={e => setImgList(prev => prev.map(i => i.index === img.index ? { ...i, alt: e.target.value } : i))}
-                        placeholder="Describe this image..."
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                        placeholder={isGeneratingThis ? "Generating..." : "Describe this image..."}
+                        disabled={isGeneratingThis}
+                        className={`w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-zing-teal disabled:bg-gray-50 disabled:text-gray-400 transition-colors ${img.alt ? "text-gray-800" : "text-gray-400"}`}
                       />
                     </div>
-                  ))}
+                    );
+                  })}
 
                   <button
                     onClick={saveImages}
