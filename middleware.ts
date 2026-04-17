@@ -4,6 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
 export async function middleware(request: NextRequest) {
+  // Emergency bypass: set BYPASS_AUTH=true in Railway env to skip Supabase auth
+  // Use only during Supabase outages. Remove after confirming Supabase is back.
+  if (process.env.BYPASS_AUTH === "true") {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
