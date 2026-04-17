@@ -34,12 +34,29 @@ export async function POST(
   const data = await res.json();
   const html = Buffer.from(data.content, "base64").toString("utf-8");
 
-  // Write back as a new commit (triggers deploy)
-  const commitSha = await writeFile(
-    `${siteId}/${page}`,
-    html,
-    `revert: restore ${siteId}/${page} to ${sha.slice(0, 7)}`
+  // Fetch the CURRENT file SHA (required by GitHub to update an existing file)
+  const currentRes = await fetch(
+    `https://api.github.com/repos/${REPO}/contents/${encodeURIComponent(`${siteId}/${page}`)}`,
+    { headers: { Authorization: `token ${GH_TOKEN}`, Accept: "application/vnd.github.v3+json" } }
   );
+  if (!currentRes.ok) {
+    return NextResponse.json({ error: "Failed to fetch current file SHA" }, { status: 502 });
+  }
+  const currentData = await currentRes.json();
+  const currentSha = currentData.sha;
+
+  // Write back as a new commit (triggers deploy)
+  let commitSha: string;
+  try {
+    commitSha = await writeFile(
+      `${siteId}/${page}`,
+      html,
+      `revert: restore ${siteId}/${page} to ${sha.slice(0, 7)}`,
+      currentSha
+    );
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
 
   // Get user for attribution
   let deployedBy = "manual";
