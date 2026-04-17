@@ -27,14 +27,15 @@ function sse(controller: ReadableStreamDefaultController, event: string, data: u
 
 export async function POST(req: NextRequest, { params }: { params: { siteId: string } }) {
   const { siteId } = params;
-  const body = await req.json().catch(() => ({})) as { indices?: number[] };
+  const body = await req.json().catch(() => ({})) as { indices?: number[]; page?: string };
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => sse(controller, event, data);
 
       try {
-        const file = await getFile(`${siteId}/index.html`);
+        const page = body.page ?? "index.html";
+        const file = await getFile(`${siteId}/${page}`);
         if (!file) { send("error", { message: "Site not found" }); controller.close(); return; }
 
         const $ = cheerio.load(file.content);

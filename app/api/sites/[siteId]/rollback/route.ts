@@ -10,7 +10,7 @@ export async function POST(
   { params }: { params: { siteId: string } }
 ) {
   const { siteId } = params;
-  const { sha } = await req.json();
+  const { sha, page = "index.html" } = await req.json();
 
   if (!sha) {
     return NextResponse.json({ error: "Missing sha" }, { status: 400 });
@@ -18,7 +18,7 @@ export async function POST(
 
   // Fetch the file content at that commit
   const res = await fetch(
-    `https://api.github.com/repos/${REPO}/contents/${encodeURIComponent(`${siteId}/index.html`)}?ref=${sha}`,
+    `https://api.github.com/repos/${REPO}/contents/${encodeURIComponent(`${siteId}/${page}`)}?ref=${sha}`,
     {
       headers: {
         Authorization: `token ${GH_TOKEN}`,
@@ -36,9 +36,9 @@ export async function POST(
 
   // Write back as a new commit (triggers deploy)
   const commitSha = await writeFile(
-    `${siteId}/index.html`,
+    `${siteId}/${page}`,
     html,
-    `revert: restore ${siteId} to ${sha.slice(0, 7)}`
+    `revert: restore ${siteId}/${page} to ${sha.slice(0, 7)}`
   );
 
   // Get user for attribution

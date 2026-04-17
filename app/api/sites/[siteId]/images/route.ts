@@ -35,8 +35,9 @@ async function putFile(filePath: string, content: string, message: string, sha: 
 }
 
 // GET — list all images with their src + alt text
-export async function GET(_req: NextRequest, { params }: { params: { siteId: string } }) {
-  const file = await getFile(`${params.siteId}/index.html`);
+export async function GET(req: NextRequest, { params }: { params: { siteId: string } }) {
+  const page = req.nextUrl.searchParams.get("page") ?? "index.html";
+  const file = await getFile(`${params.siteId}/${page}`);
   if (!file) return NextResponse.json({ error: "Site not found" }, { status: 404 });
 
   const $ = cheerio.load(file.content);
@@ -67,12 +68,13 @@ export async function GET(_req: NextRequest, { params }: { params: { siteId: str
 
 // PATCH — update alt text for one or more images by index
 export async function PATCH(req: NextRequest, { params }: { params: { siteId: string } }) {
-  const { updates, sha } = await req.json() as {
+  const { updates, sha, page = "index.html" } = await req.json() as {
     updates: Array<{ index: number; alt: string }>;
     sha: string;
+    page?: string;
   };
 
-  const file = await getFile(`${params.siteId}/index.html`);
+  const file = await getFile(`${params.siteId}/${page}`);
   if (!file) return NextResponse.json({ error: "Site not found" }, { status: 404 });
 
   const $ = cheerio.load(file.content, { xmlMode: false });
@@ -85,7 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { siteId: st
   }
 
   const updated = $.html();
-  const filePath = `${params.siteId}/index.html`;
+  const filePath = `${params.siteId}/${page}`;
   const result = await putFile(filePath, updated, `images(${params.siteId}): update alt text (${updates.length} images)`, sha ?? file.sha);
 
   return NextResponse.json({ ok: true, sha: result.content?.sha });

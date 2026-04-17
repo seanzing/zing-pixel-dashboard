@@ -81,6 +81,18 @@ export default function SiteEditorPage() {
   const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
   const [locationPreview, setLocationPreview] = useState<string | null>(null);
 
+  // Multi-page state
+  type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
+  const [pages, setPages] = useState<PageEntry[]>([]);
+  const [currentPage, setCurrentPage] = useState("index.html");
+  const [showNewPageModal, setShowNewPageModal] = useState(false);
+  const [newPageName, setNewPageName] = useState("");
+  const [newPageSlug, setNewPageSlug] = useState("");
+  const [newPageCloneFrom, setNewPageCloneFrom] = useState("index.html");
+  const [newPageAddToNav, setNewPageAddToNav] = useState(true);
+  const [newPageCreating, setNewPageCreating] = useState(false);
+  const [newPageError, setNewPageError] = useState("");
+
   // Left panel tabs
   const [leftTab, setLeftTab] = useState<"details" | "seo" | "images">("details");
 
@@ -250,10 +262,58 @@ export default function SiteEditorPage() {
     }
   }
 
+  async function fetchPages() {
+    try {
+      const res = await fetch(`/api/sites/${siteId}/pages`);
+      const data = await res.json();
+      if (data.pages) setPages(data.pages);
+    } catch { /* non-fatal */ }
+  }
+
+  async function createPage() {
+    if (!newPageName.trim() || !newPageSlug.trim()) return;
+    setNewPageCreating(true);
+    setNewPageError("");
+    try {
+      const res = await fetch(`/api/sites/${siteId}/pages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newPageName.trim(),
+          slug: newPageSlug.trim(),
+          cloneFrom: newPageCloneFrom,
+          addToNav: newPageAddToNav,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setNewPageError(data.error || "Failed to create page"); return; }
+      await fetchPages();
+      setCurrentPage(data.filename);
+      setShowNewPageModal(false);
+      setNewPageName("");
+      setNewPageSlug("");
+      setNewPageAddToNav(true);
+      // Clear editor state for new page
+      setChatMessages([]);
+      setBlobUrl(null);
+    } catch (err) {
+      setNewPageError((err as Error).message);
+    } finally {
+      setNewPageCreating(false);
+    }
+  }
+
+  async function deletePage(filename: string) {
+    if (!confirm(`Delete "${filename}"? This cannot be undone.`)) return;
+    await fetch(`/api/sites/${siteId}/pages/${filename}`, { method: "DELETE" });
+    await fetchPages();
+    if (currentPage === filename) setCurrentPage("index.html");
+  }
+
   async function fetchSeo() {
     setSeoLoading(true);
     try {
-      const res = await fetch(`/api/sites/${siteId}/seo`);
+      const res = await fetch(`/api/sites/${siteId}/seo?page=${currentPage}`);
       const data = await res.json();
       if (data.seo) { setSeoData(data.seo); setSeoSha(data.sha); }
     } finally { setSeoLoading(false); }
@@ -266,7 +326,7 @@ export default function SiteEditorPage() {
       const res = await fetch(`/api/sites/${siteId}/seo`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seo: seoData, sha: seoSha }),
+        body: JSON.stringify({ seo: seoData, sha: seoSha, page: currentPage }),
       });
       const data = await res.json();
       if (data.sha) setSeoSha(data.sha);
@@ -278,7 +338,7 @@ export default function SiteEditorPage() {
   async function fetchImages() {
     setImgLoading(true);
     try {
-      const res = await fetch(`/api/sites/${siteId}/images`);
+      const res = await fetch(`/api/sites/${siteId}/images?page=${currentPage}`);
       const data = await res.json();
       if (data.images) { setImgList(data.images); setImgSha(data.sha); }
     } finally { setImgLoading(false); }
@@ -291,7 +351,7 @@ export default function SiteEditorPage() {
       const res = await fetch(`/api/sites/${siteId}/images/generate-alt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(indices?.length ? { indices } : {}),
+        body: JSON.stringify(indices?.length ? { indices, page: currentPage } : { page: currentPage }),
       });
       if (!res.body) return;
 
@@ -341,7 +401,7 @@ export default function SiteEditorPage() {
       const res = await fetch(`/api/sites/${siteId}/images`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates, sha: imgSha }),
+        body: JSON.stringify({ updates, sha: imgSha, page: currentPage }),
       });
       const data = await res.json();
       if (data.sha) setImgSha(data.sha);
@@ -424,7 +484,7 @@ export default function SiteEditorPage() {
   async function fetchVersions() {
     setVersionsLoading(true);
     try {
-      const res = await fetch(`/api/sites/${siteId}/versions`);
+      const res = await fetch(`/api/sites/${siteId}/versions?page=${currentPage}`);
       const data = await res.json();
       setVersions(data.versions ?? []);
     } finally {
@@ -438,7 +498,7 @@ export default function SiteEditorPage() {
       const res = await fetch(`/api/sites/${siteId}/rollback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sha }),
+        body: JSON.stringify({ sha, page: currentPage }),
       });
       const data = await res.json();
       if (data.commitSha) {
@@ -537,6 +597,7 @@ export default function SiteEditorPage() {
   useEffect(() => {
     fetchSite();
     fetchVersions();
+    fetchPages();
     fetchDomains();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
@@ -597,6 +658,7 @@ export default function SiteEditorPage() {
         siteId,
         message,
         chatHistory: chatMessages,
+        page: currentPage,
       }),
     });
 
@@ -1129,6 +1191,46 @@ export default function SiteEditorPage() {
 
         {/* Right: Tabbed Chat / Preview */}
         <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+
+          {/* Page selector bar */}
+          <div className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 border-b border-gray-200 overflow-x-auto shrink-0">
+            {pages.map((p) => (
+              <button
+                key={p.filename}
+                onClick={() => {
+                  setCurrentPage(p.filename);
+                  setBlobUrl(null);
+                  setLocationPreview(null);
+                  setSeoData(null);
+                  setImgList([]);
+                  setChatMessages([]);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors group ${
+                  currentPage === p.filename
+                    ? "bg-white text-zing-teal shadow-sm border border-gray-200"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-white/70"
+                }`}
+              >
+                {p.isHome && <span className="text-[10px]">🏠</span>}
+                {p.label}
+                {!p.isHome && currentPage === p.filename && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); deletePage(p.filename); }}
+                    className="ml-1 text-gray-300 hover:text-red-400 transition-colors cursor-pointer text-[10px] leading-none"
+                    title={`Delete ${p.filename}`}
+                  >✕</span>
+                )}
+              </button>
+            ))}
+            {/* New page button */}
+            <button
+              onClick={() => setShowNewPageModal(true)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium text-gray-400 hover:text-zing-teal hover:bg-white/70 transition-colors whitespace-nowrap ml-1"
+            >
+              <span className="text-sm leading-none">+</span> New Page
+            </button>
+          </div>
+
           {/* Tab bar */}
           <div className="flex items-center justify-between border-b border-gray-200 bg-white pr-4">
             <div className="flex">
@@ -1537,12 +1639,14 @@ export default function SiteEditorPage() {
           >
             Push to Production
           </button>
-          <button
-            onClick={() => setShowLocModal(true)}
-            className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 transition-colors flex items-center gap-1.5"
-          >
-            📍 Generate Locations
-          </button>
+          {currentPage === "index.html" && (
+            <button
+              onClick={() => setShowLocModal(true)}
+              className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 transition-colors flex items-center gap-1.5"
+            >
+              📍 Generate Locations
+            </button>
+          )}
         </div>
         </div>
         </div>
@@ -1712,6 +1816,94 @@ export default function SiteEditorPage() {
           )}
         </div>
       </div>
+
+      {/* New Page modal */}
+      {showNewPageModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div>
+                <h3 className="text-sm font-semibold text-zing-dark">New Page</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Add a page to this site</p>
+              </div>
+              <button onClick={() => { setShowNewPageModal(false); setNewPageError(""); }} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Page Name</label>
+                <input
+                  value={newPageName}
+                  onChange={e => {
+                    setNewPageName(e.target.value);
+                    setNewPageSlug(e.target.value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+                  }}
+                  placeholder="e.g. Services"
+                  autoFocus
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">URL Slug</label>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">/</span>
+                  <input
+                    value={newPageSlug}
+                    onChange={e => setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+                    placeholder="services"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                  <span className="text-xs text-gray-400">/</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Copy Layout From</label>
+                <select
+                  value={newPageCloneFrom}
+                  onChange={e => setNewPageCloneFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                >
+                  {pages.map(p => (
+                    <option key={p.filename} value={p.filename}>{p.label} ({p.filename})</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">Copies the nav, header, footer, and styles. AI will update the page title and H1.</p>
+              </div>
+
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newPageAddToNav}
+                  onChange={e => setNewPageAddToNav(e.target.checked)}
+                  className="mt-0.5 accent-zing-teal"
+                />
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Add to nav on all pages</p>
+                  <p className="text-xs text-gray-400">AI will insert this page into the navigation bar on every existing page. Takes ~30s.</p>
+                </div>
+              </label>
+
+              {newPageError && <p className="text-xs text-red-500">{newPageError}</p>}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <button onClick={() => { setShowNewPageModal(false); setNewPageError(""); }} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+              <button
+                onClick={createPage}
+                disabled={newPageCreating || !newPageName.trim() || !newPageSlug.trim()}
+                className="bg-zing-teal text-white px-5 py-2 rounded-lg text-xs font-semibold hover:bg-zing-dark transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {newPageCreating
+                  ? <><span className="animate-spin">⟳</span> {newPageAddToNav ? "Creating + updating nav..." : "Creating..."}</>
+                  : "Create Page"
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Generate Locations modal */}
       {showLocModal && (

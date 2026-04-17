@@ -4,7 +4,7 @@ import { processAiEdit } from "@/lib/ai";
 import { getFile, writeFile } from "@/lib/github";
 
 export async function POST(request: Request) {
-  const { siteId, message, chatHistory } = await request.json();
+  const { siteId, message, chatHistory, page = "index.html" } = await request.json();
 
   if (!siteId || !message) {
     return NextResponse.json(
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const file = await getFile(`${siteId}/index.html`);
+  const file = await getFile(`${siteId}/${page}`);
   if (!file) {
     return NextResponse.json(
       { error: "Site files not found in GitHub" },
@@ -31,9 +31,9 @@ export async function POST(request: Request) {
     const result = await processAiEdit(currentHtml, message, chatHistory ?? []);
 
     // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
-    const commitMsg = `edit(${siteId}): ${result.changes.slice(0, 72)}`;
+    const commitMsg = `edit(${siteId}/${page}): ${result.changes.slice(0, 72)}`;
     const commitSha = await writeFile(
-      `${siteId}/index.html`,
+      `${siteId}/${page}`,
       result.html,
       commitMsg,
       file.sha

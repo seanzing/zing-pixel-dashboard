@@ -4,13 +4,14 @@ const GH_TOKEN = process.env.GITHUB_TOKEN!;
 const REPO = process.env.GITHUB_SITES_REPO!;
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { siteId: string } }
 ) {
   const { siteId } = params;
+  const page = new URL(req.url).searchParams.get("page") ?? "index.html";
 
   const res = await fetch(
-    `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(`${siteId}/index.html`)}&per_page=100`,
+    `https://api.github.com/repos/${REPO}/commits?path=${encodeURIComponent(`${siteId}/${page}`)}&per_page=100`,
     {
       headers: {
         Authorization: `token ${GH_TOKEN}`,
