@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient, createServerSupabaseClient } from "@/lib/supabase/server";
 import { processAiEdit } from "@/lib/ai";
-import { getFile, writeFile } from "@/lib/github";
+import { getFile, writeFile, StaleShaError } from "@/lib/github";
 
 export async function POST(request: Request) {
   const { siteId, message, chatHistory, page = "index.html" } = await request.json();
@@ -39,10 +39,10 @@ export async function POST(request: Request) {
       file.sha
     );
 
-    // Save chat messages
+    // Save chat messages (scoped to page)
     await supabase.from("chat_messages").insert([
-      { site_id: siteId, role: "user", content: message },
-      { site_id: siteId, role: "assistant", content: result.changes },
+      { site_id: siteId, page, role: "user", content: message },
+      { site_id: siteId, page, role: "assistant", content: result.changes },
     ]);
 
     // Update site timestamp
@@ -67,8 +67,10 @@ export async function POST(request: Request) {
       previewUrl: `https://${siteId}.pages.dev`,
     });
   } catch (err) {
-    const errorMessage =
-      err instanceof Error ? err.message : "AI edit failed";
+    if (err instanceof StaleShaError) {
+      return NextResponse.json({ error: err.message, conflict: true }, { status: 409 });
+    }
+    const errorMessage = err instanceof Error ? err.message : "AI edit failed";
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

@@ -25,7 +25,16 @@ export async function getFile(
   return { content, sha: data.sha };
 }
 
-/** Write (create or update) a file in the repo. Returns the commit SHA. */
+/** Custom error thrown when a write conflicts with a concurrent edit (stale SHA). */
+export class StaleShaError extends Error {
+  constructor(path: string) {
+    super(`Concurrent edit conflict: ${path} was modified by another user. Reload to get the latest version.`);
+    this.name = "StaleShaError";
+  }
+}
+
+/** Write (create or update) a file in the repo. Returns the commit SHA.
+ *  Throws StaleShaError when GitHub returns 409 (stale SHA / concurrent edit). */
 export async function writeFile(
   path: string,
   content: string,
@@ -43,6 +52,16 @@ export async function writeFile(
     headers: { ...headers(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+  if (res.status === 409 || res.status === 422) {
+    const body = await res.json().catch(() => ({}));
+    const msg = (body as { message?: string }).message ?? "";
+    // GitHub returns 422 with "does not match" when SHA is stale
+    if (res.status === 409 || msg.includes("does not match") || msg.includes("SHA")) {
+      throw new StaleShaError(path);
+    }
+    throw new Error(`GitHub PUT ${path}: ${res.status} ${msg}`);
+  }
 
   if (!res.ok) throw new Error(`GitHub PUT ${path}: ${res.status} ${await res.text()}`);
   const data = await res.json();

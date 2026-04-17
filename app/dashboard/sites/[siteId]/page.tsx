@@ -81,6 +81,9 @@ export default function SiteEditorPage() {
   const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
   const [locationPreview, setLocationPreview] = useState<string | null>(null);
 
+  // Concurrent edit conflict
+  const [conflictError, setConflictError] = useState<string | null>(null);
+
   // Multi-page state
   type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
   const [pages, setPages] = useState<PageEntry[]>([]);
@@ -203,7 +206,7 @@ export default function SiteEditorPage() {
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   async function fetchSite() {
-    const res = await fetch(`/api/sites/${siteId}`);
+    const res = await fetch(`/api/sites/${siteId}?page=${currentPage}`);
     const data = await res.json();
     setSite(data.site);
     setDeployments(data.deployments ?? []);
@@ -329,6 +332,7 @@ export default function SiteEditorPage() {
         body: JSON.stringify({ seo: seoData, sha: seoSha, page: currentPage }),
       });
       const data = await res.json();
+      if (data.conflict) { setConflictError(data.error); return; }
       if (data.sha) setSeoSha(data.sha);
       setSeoSaved(true);
       setTimeout(() => setSeoSaved(false), 2500);
@@ -404,6 +408,7 @@ export default function SiteEditorPage() {
         body: JSON.stringify({ updates, sha: imgSha, page: currentPage }),
       });
       const data = await res.json();
+      if (data.conflict) { setConflictError(data.error); return; }
       if (data.sha) setImgSha(data.sha);
       setImgSaved(true);
       setTimeout(() => setImgSaved(false), 2500);
@@ -602,6 +607,16 @@ export default function SiteEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
+  // Re-fetch chat history when page changes (chat is scoped per page)
+  useEffect(() => {
+    if (!siteId) return;
+    fetch(`/api/sites/${siteId}?page=${currentPage}`)
+      .then(r => r.json())
+      .then(d => { if (d.chatMessages) setChatMessages(d.chatMessages); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
@@ -679,6 +694,8 @@ export default function SiteEditorPage() {
         setPreviewKey((k) => k + 1);
       }
       await fetchSite();
+    } else if (data.conflict) {
+      setConflictError(data.error);
     } else if (data.error) {
       setChatMessages((prev) => [
         ...prev,
@@ -1827,6 +1844,36 @@ export default function SiteEditorPage() {
           )}
         </div>
       </div>
+
+      {/* Concurrent edit conflict modal */}
+      {conflictError && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <span className="text-2xl leading-none">⚠️</span>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800 mb-1">Edit Conflict</h3>
+                <p className="text-sm text-gray-500">This page was saved by someone else while you were editing. Your unsaved changes are still here.</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mb-5">Reload to get the latest version, then reapply your changes. Your AI chat history will be preserved.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConflictError(null)}
+                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+              >
+                Dismiss
+              </button>
+              <button
+                onClick={() => { setConflictError(null); window.location.reload(); }}
+                className="flex-1 px-4 py-2 bg-zing-teal text-white rounded-lg text-sm font-medium hover:bg-zing-dark transition-colors"
+              >
+                Reload Page
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* New Page modal */}
       {showNewPageModal && (

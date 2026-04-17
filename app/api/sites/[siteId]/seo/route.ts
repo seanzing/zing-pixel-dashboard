@@ -29,7 +29,13 @@ async function putFile(filePath: string, content: string, message: string, sha: 
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(`GitHub PUT failed: ${(err as { message?: string }).message || res.status}`);
+    const msg = (err as { message?: string }).message ?? "";
+    if (res.status === 409 || res.status === 422 && (msg.includes("does not match") || msg.includes("SHA"))) {
+      const e = new Error("Concurrent edit conflict: page was modified by another user. Reload to get the latest version.");
+      (e as Error & { conflict: boolean }).conflict = true;
+      throw e;
+    }
+    throw new Error(`GitHub PUT failed: ${msg || res.status}`);
   }
   return res.json();
 }
@@ -102,7 +108,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { siteId: st
 
   const updated = $.html();
   const filePath = `${params.siteId}/${page}`;
-  const result = await putFile(filePath, updated, `seo(${params.siteId}): update meta tags`, sha ?? file.sha);
-
-  return NextResponse.json({ ok: true, sha: result.content?.sha });
+  try {
+    const result = await putFile(filePath, updated, `seo(${params.siteId}): update meta tags`, sha ?? file.sha);
+    return NextResponse.json({ ok: true, sha: result.content?.sha });
+  } catch (err) {
+    if ((err as Error & { conflict?: boolean }).conflict) {
+      return NextResponse.json({ error: (err as Error).message, conflict: true }, { status: 409 });
+    }
+    throw err;
+  }
 }

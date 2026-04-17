@@ -3,11 +3,12 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { getFile, writeFile } from "@/lib/github";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { siteId: string } }
 ) {
   const supabase = createServiceRoleClient();
   const { siteId } = params;
+  const page = new URL(request.url).searchParams.get("page") ?? "index.html";
 
   const { data: site } = await supabase
     .from("sites")
@@ -30,6 +31,7 @@ export async function GET(
     .from("chat_messages")
     .select("role, content")
     .eq("site_id", siteId)
+    .eq("page", page)
     .order("created_at", { ascending: true });
 
   const { data: editLog } = await supabase
