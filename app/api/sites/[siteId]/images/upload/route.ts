@@ -40,11 +40,10 @@ export async function POST(req: NextRequest, { params }: { params: { siteId: str
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
   const page = (formData.get("page") as string) ?? "index.html";
-  const imgIndexStr = formData.get("imgIndex") as string | null;
-  const imgIndex = imgIndexStr !== null ? parseInt(imgIndexStr, 10) : -1;
+  const rawSrc = (formData.get("rawSrc") as string) ?? ""; // original URL to replace everywhere in HTML
 
   if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
-  if (imgIndex < 0) return NextResponse.json({ error: "imgIndex required" }, { status: 400 });
+  if (!rawSrc) return NextResponse.json({ error: "rawSrc required" }, { status: 400 });
 
   // Validate image type
   const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
@@ -73,32 +72,24 @@ export async function POST(req: NextRequest, { params }: { params: { siteId: str
 
   const newSrc = `/${safeName}`;
 
-  // Update the HTML to replace the src at imgIndex
+  // Update the HTML — replace ALL occurrences of rawSrc with newSrc
+  // This handles: img src, CSS background-image in style attrs, style blocks — everything
   const htmlFile = await getFile(`${params.siteId}/${page}`);
   if (!htmlFile) return NextResponse.json({ error: "Page not found" }, { status: 404 });
 
-  // Simple regex-based src replacement at the nth img tag
-  let imgCount = 0;
-  let updatedHtml = htmlFile.content.replace(/<img([^>]*?)>/gi, (match: string, attrs: string) => {
-    if (imgCount === imgIndex) {
-      imgCount++;
-      // Replace src attribute, preserving all other attrs
-      return match.replace(/src\s*=\s*["'][^"']*["']/i, `src="${newSrc}"`);
-    }
-    imgCount++;
-    return match;
-  });
+  // Escape the rawSrc for use in a regex
+  const escaped = rawSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const updatedHtml = htmlFile.content.replace(new RegExp(escaped, "g"), newSrc);
 
-  // If regex didn't match (e.g. self-closing <img ... />), handle that too
-  if (imgCount === 0) {
-    return NextResponse.json({ error: "No images found in HTML" }, { status: 400 });
+  if (updatedHtml === htmlFile.content) {
+    return NextResponse.json({ error: `Could not find "${rawSrc}" in page HTML` }, { status: 400 });
   }
 
   // Save updated HTML
   const result = await putRaw(
     `${params.siteId}/${page}`,
     Buffer.from(updatedHtml).toString("base64"),
-    `upload(${params.siteId}): set img[${imgIndex}] src to ${safeName}`,
+    `upload(${params.siteId}): replace ${rawSrc} → ${safeName}`,
     htmlFile.sha
   );
 

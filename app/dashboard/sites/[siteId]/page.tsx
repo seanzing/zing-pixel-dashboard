@@ -85,7 +85,7 @@ export default function SiteEditorPage() {
   const [conflictError, setConflictError] = useState<string | null>(null);
 
   // Click-to-replace image state
-  const [selectedImg, setSelectedImg] = useState<{ index: number; src: string } | null>(null);
+  const [selectedImg, setSelectedImg] = useState<{ index: number; rawSrc: string; resolvedSrc: string; kind: "img" | "bg" } | null>(null);
   const [imgReplaceFile, setImgReplaceFile] = useState<File | null>(null);
   const [imgReplacing, setImgReplacing] = useState(false);
   const [imgReplaceError, setImgReplaceError] = useState("");
@@ -149,46 +149,86 @@ export default function SiteEditorPage() {
     const interactionScript = interactive ? `
 <script>
 (function() {
-  function init() {
-    document.querySelectorAll('img').forEach(function(img, i) {
-      img.style.cursor = 'pointer';
-      img.style.transition = 'outline 0.12s, box-shadow 0.12s';
-      img.setAttribute('data-pixel-index', i);
-      img.addEventListener('mouseenter', function() {
-        if (!img.dataset.pixelSelected) {
-          img.style.outline = '2px dashed #2a7c6f';
-          img.style.outlineOffset = '3px';
-        }
-      });
-      img.addEventListener('mouseleave', function() {
-        if (!img.dataset.pixelSelected) {
-          img.style.outline = '';
-          img.style.outlineOffset = '';
-        }
-      });
-      img.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        document.querySelectorAll('img').forEach(function(im) {
-          im.style.outline = '';
-          im.style.outlineOffset = '';
-          im.style.boxShadow = '';
-          delete im.dataset.pixelSelected;
-        });
-        img.style.outline = '3px solid #2a7c6f';
-        img.style.outlineOffset = '3px';
-        img.style.boxShadow = '0 0 0 6px rgba(42,124,111,0.15)';
-        img.dataset.pixelSelected = '1';
-        window.parent.postMessage({
-          type: 'PIXEL_IMG_CLICK',
-          index: i,
-          src: img.getAttribute('src') || '',
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-        }, '*');
-      });
+  var _selected = null;
+
+  function clearAllHighlights() {
+    document.querySelectorAll('[data-pixel-el]').forEach(function(el) {
+      el.style.outline = '';
+      el.style.outlineOffset = '';
+      el.style.boxShadow = '';
+      delete el.dataset.pixelSelected;
+    });
+    _selected = null;
+  }
+
+  function highlightEl(el) {
+    clearAllHighlights();
+    el.style.outline = '3px solid #2a7c6f';
+    el.style.outlineOffset = '3px';
+    el.style.boxShadow = '0 0 0 6px rgba(42,124,111,0.15)';
+    el.dataset.pixelSelected = '1';
+    _selected = el;
+  }
+
+  function makeClickable(el, index, kind, rawSrc) {
+    el.setAttribute('data-pixel-el', '1');
+    el.style.cursor = 'pointer';
+    el.style.transition = 'outline 0.12s, box-shadow 0.12s';
+    el.addEventListener('mouseenter', function() {
+      if (!el.dataset.pixelSelected) {
+        el.style.outline = '2px dashed #2a7c6f';
+        el.style.outlineOffset = '3px';
+      }
+    });
+    el.addEventListener('mouseleave', function() {
+      if (!el.dataset.pixelSelected) {
+        el.style.outline = '';
+        el.style.outlineOffset = '';
+      }
+    });
+    el.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      highlightEl(el);
+      var resolvedSrc = (kind === 'img') ? el.src : rawSrc;
+      window.parent.postMessage({
+        type: 'PIXEL_IMG_CLICK',
+        index: index,
+        kind: kind,
+        rawSrc: rawSrc,
+        resolvedSrc: resolvedSrc,
+      }, '*');
     });
   }
+
+  function init() {
+    // 1. <img> elements
+    document.querySelectorAll('img').forEach(function(img, i) {
+      var raw = img.getAttribute('src') || '';
+      if (!raw || raw.startsWith('data:')) return; // skip tiny data URIs
+      makeClickable(img, i, 'img', raw);
+    });
+
+    // 2. Elements with inline background-image style
+    var bgIndex = 0;
+    document.querySelectorAll('[style*="background-image"]').forEach(function(el) {
+      var bgVal = el.style.backgroundImage;
+      var match = bgVal.match(/url\\(["']?([^"')]+)["']?\\)/);
+      if (!match || !match[1]) return;
+      var raw = match[1];
+      if (raw.startsWith('data:')) return;
+      makeClickable(el, bgIndex++, 'bg', raw);
+    });
+
+    // 3. Dismiss on clicking non-image areas
+    document.addEventListener('click', function(e) {
+      if (_selected && !e.target.closest('[data-pixel-el]')) {
+        clearAllHighlights();
+        window.parent.postMessage({ type: 'PIXEL_DESELECT' }, '*');
+      }
+    });
+  }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
@@ -343,7 +383,7 @@ export default function SiteEditorPage() {
       const form = new FormData();
       form.append("file", imgReplaceFile);
       form.append("page", currentPage);
-      form.append("imgIndex", String(selectedImg.index));
+      form.append("rawSrc", selectedImg.rawSrc);
 
       const res = await fetch(`/api/sites/${siteId}/images/upload`, { method: "POST", body: form });
       const data = await res.json();
@@ -716,10 +756,17 @@ export default function SiteEditorPage() {
   useEffect(() => {
     function handler(e: MessageEvent) {
       if (e.data?.type === "PIXEL_IMG_CLICK") {
-        setSelectedImg({ index: e.data.index, src: e.data.src ?? "" });
+        setSelectedImg({
+          index: e.data.index,
+          rawSrc: e.data.rawSrc ?? "",
+          resolvedSrc: e.data.resolvedSrc ?? e.data.rawSrc ?? "",
+          kind: e.data.kind ?? "img",
+        });
         setImgReplaceFile(null);
         setImgReplaceError("");
         setImgReplaceSuccess(false);
+      } else if (e.data?.type === "PIXEL_DESELECT") {
+        setSelectedImg(null);
       }
     }
     window.addEventListener("message", handler);
@@ -1565,22 +1612,13 @@ export default function SiteEditorPage() {
                   </div>
                   {/* Device frame + iframe */}
                   <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center relative">
-                    {/* Click-to-replace hint when in interactive mode */}
-                    {blobUrl && !selectedImg && (
-                      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                        <span className="bg-zing-dark/80 text-white text-[11px] px-3 py-1.5 rounded-full shadow backdrop-blur-sm">
-                          🖼 Click any image to replace it
-                        </span>
-                      </div>
-                    )}
-
                     {/* Image replace overlay */}
                     {selectedImg && (
                       <div className="absolute bottom-4 right-4 z-20 bg-white rounded-xl shadow-2xl border border-gray-200 w-72 overflow-hidden">
                         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
                           <div>
-                            <p className="text-xs font-semibold text-zing-dark">Replace Image</p>
-                            <p className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[180px]">{selectedImg.src}</p>
+                            <p className="text-xs font-semibold text-zing-dark">Replace {selectedImg.kind === "bg" ? "Background" : "Image"}</p>
+                            <p className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[180px]">{selectedImg.rawSrc}</p>
                           </div>
                           <button onClick={() => setSelectedImg(null)} className="text-gray-400 hover:text-gray-600 text-sm leading-none ml-2 shrink-0">✕</button>
                         </div>
@@ -1589,9 +1627,10 @@ export default function SiteEditorPage() {
                         <div className="px-4 pt-3">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={selectedImg.src.startsWith("/") ? `https://${siteId}.pages.dev${selectedImg.src}` : selectedImg.src}
+                            src={selectedImg.resolvedSrc}
                             alt="Current image"
                             className="w-full h-28 object-cover rounded-lg border border-gray-100 bg-gray-50"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                           />
                         </div>
 
