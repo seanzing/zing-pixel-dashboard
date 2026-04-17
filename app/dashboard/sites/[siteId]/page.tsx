@@ -92,6 +92,9 @@ export default function SiteEditorPage() {
   const [dirtyPages, setDirtyPages] = useState<Set<string>>(new Set());
   const [htmlDeploying, setHtmlDeploying] = useState(false);
 
+  // Text editing state
+  const [textEditing, setTextEditing] = useState(false);
+
   // Click-to-replace image state
   const [selectedImg, setSelectedImg] = useState<{ index: number; rawSrc: string; resolvedSrc: string; kind: "img" | "bg" } | null>(null);
   const [imgReplaceFile, setImgReplaceFile] = useState<File | null>(null);
@@ -181,6 +184,12 @@ export default function SiteEditorPage() {
   function buildBlobPreview(html: string, siteId: string, interactive = false): string {
     const base = `<base href="https://${siteId}.pages.dev/">`;
     const interactionScript = interactive ? `
+<style>
+  [data-pixel-el] { cursor: pointer !important; transition: outline 0.12s, box-shadow 0.12s; }
+  [data-pixel-text]:not([contenteditable="true"]) { cursor: text !important; }
+  [data-pixel-text]:not([contenteditable="true"]):hover { outline: 2px dashed #2a7c6f !important; outline-offset: 2px !important; }
+  [data-pixel-text][contenteditable="true"] { outline: 2px solid #2a7c6f !important; outline-offset: 2px !important; box-shadow: 0 0 0 4px rgba(42,124,111,0.12) !important; border-radius: 2px; }
+</style>
 <script>
 (function() {
   var _selected = null;
@@ -204,59 +213,119 @@ export default function SiteEditorPage() {
     _selected = el;
   }
 
-  function makeClickable(el, index, kind, rawSrc) {
+  function makeImageClickable(el, index, kind, rawSrc) {
     el.setAttribute('data-pixel-el', '1');
-    el.style.cursor = 'pointer';
-    el.style.transition = 'outline 0.12s, box-shadow 0.12s';
     el.addEventListener('mouseenter', function() {
-      if (!el.dataset.pixelSelected) {
-        el.style.outline = '2px dashed #2a7c6f';
-        el.style.outlineOffset = '3px';
-      }
+      if (!el.dataset.pixelSelected) { el.style.outline = '2px dashed #2a7c6f'; el.style.outlineOffset = '3px'; }
     });
     el.addEventListener('mouseleave', function() {
-      if (!el.dataset.pixelSelected) {
-        el.style.outline = '';
-        el.style.outlineOffset = '';
-      }
+      if (!el.dataset.pixelSelected) { el.style.outline = ''; el.style.outlineOffset = ''; }
     });
     el.addEventListener('click', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       highlightEl(el);
-      var resolvedSrc = (kind === 'img') ? el.src : rawSrc;
       window.parent.postMessage({
-        type: 'PIXEL_IMG_CLICK',
-        index: index,
-        kind: kind,
-        rawSrc: rawSrc,
-        resolvedSrc: resolvedSrc,
+        type: 'PIXEL_IMG_CLICK', index: index, kind: kind,
+        rawSrc: rawSrc, resolvedSrc: (kind === 'img') ? el.src : rawSrc,
       }, '*');
     });
   }
 
+  function makeTextEditable(el, index) {
+    // Capture clean original HTML BEFORE setting data-pixel-text
+    var originalHtml = el.outerHTML;
+    el.setAttribute('data-pixel-text', index);
+
+    el.addEventListener('click', function(e) {
+      // Don't activate if clicking on an image element inside
+      if (e.target.closest('[data-pixel-el]')) return;
+      if (el.isContentEditable) return;
+      e.stopPropagation();
+      clearAllHighlights(); // close any selected image
+      window.parent.postMessage({ type: 'PIXEL_DESELECT' }, '*');
+
+      el.contentEditable = 'true';
+      el.focus();
+
+      // Place cursor at click position if possible
+      try {
+        var range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range) { var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+      } catch(e) {}
+
+      window.parent.postMessage({ type: 'PIXEL_TEXT_START' }, '*');
+
+      function saveEdit() {
+        if (!el.isContentEditable) return;
+        el.contentEditable = 'false';
+        // Build clean newHtml — strip injected attributes
+        var clone = el.cloneNode(true);
+        clone.removeAttribute('contenteditable');
+        clone.removeAttribute('data-pixel-text');
+        var newHtml = clone.outerHTML;
+        if (newHtml !== originalHtml) {
+          window.parent.postMessage({
+            type: 'PIXEL_TEXT_CHANGE',
+            originalHtml: originalHtml,
+            newHtml: newHtml,
+          }, '*');
+          originalHtml = newHtml; // update for subsequent edits on same element
+        }
+        window.parent.postMessage({ type: 'PIXEL_TEXT_END' }, '*');
+      }
+
+      function onKeyDown(e) {
+        if (e.key === 'Escape') {
+          el.innerHTML = originalHtml.replace(/^<[^>]+>/, '').replace(/<\\/[^>]+>$/, '');
+          saveEdit();
+          el.removeEventListener('keydown', onKeyDown);
+        }
+        // Shift+Enter = newline (natural), plain Enter on single-line elements = save
+        if (e.key === 'Enter' && !e.shiftKey) {
+          var tag = el.tagName.toLowerCase();
+          if (tag !== 'p' && tag !== 'li') { e.preventDefault(); saveEdit(); el.removeEventListener('keydown', onKeyDown); }
+        }
+      }
+      el.addEventListener('keydown', onKeyDown);
+      el.addEventListener('blur', function() {
+        el.removeEventListener('keydown', onKeyDown);
+        saveEdit();
+      }, { once: true });
+    });
+  }
+
   function init() {
-    // 1. <img> elements
+    // Images and CSS backgrounds
     document.querySelectorAll('img').forEach(function(img, i) {
       var raw = img.getAttribute('src') || '';
-      if (!raw || raw.startsWith('data:')) return; // skip tiny data URIs
-      makeClickable(img, i, 'img', raw);
+      if (!raw || raw.startsWith('data:')) return;
+      makeImageClickable(img, i, 'img', raw);
     });
-
-    // 2. Elements with inline background-image style
     var bgIndex = 0;
     document.querySelectorAll('[style*="background-image"]').forEach(function(el) {
-      var bgVal = el.style.backgroundImage;
-      var match = bgVal.match(/url\\(["']?([^"')]+)["']?\\)/);
-      if (!match || !match[1]) return;
-      var raw = match[1];
-      if (raw.startsWith('data:')) return;
-      makeClickable(el, bgIndex++, 'bg', raw);
+      var match = el.style.backgroundImage.match(/url\\(["']?([^"')]+)["']?\\)/);
+      if (!match || !match[1] || match[1].startsWith('data:')) return;
+      makeImageClickable(el, bgIndex++, 'bg', match[1]);
     });
 
-    // 3. Dismiss on clicking non-image areas
+    // Text elements
+    var textIndex = 0;
+    var textSelectors = 'h1, h2, h3, h4, h5, h6, button, [class*="btn"], [class*="cta"]';
+    document.querySelectorAll(textSelectors).forEach(function(el) {
+      if (el.querySelector('img')) return; // skip image-containing elements
+      if (!el.textContent.trim()) return;
+      makeTextEditable(el, textIndex++);
+    });
+    // Paragraphs with meaningful content (skip short/empty)
+    document.querySelectorAll('p').forEach(function(el) {
+      if (el.textContent.trim().length < 5) return;
+      if (el.querySelector('img')) return;
+      makeTextEditable(el, textIndex++);
+    });
+
+    // Dismiss image selection on clicking non-interactive areas
     document.addEventListener('click', function(e) {
-      if (_selected && !e.target.closest('[data-pixel-el]')) {
+      if (_selected && !e.target.closest('[data-pixel-el]') && !e.target.closest('[data-pixel-text]')) {
         clearAllHighlights();
         window.parent.postMessage({ type: 'PIXEL_DESELECT' }, '*');
       }
@@ -917,6 +986,25 @@ export default function SiteEditorPage() {
         setImgReplaceSuccess(false);
       } else if (e.data?.type === "PIXEL_DESELECT") {
         setSelectedImg(null);
+      } else if (e.data?.type === "PIXEL_TEXT_START") {
+        setTextEditing(true);
+        setSelectedImg(null); // close image panel if open
+      } else if (e.data?.type === "PIXEL_TEXT_END") {
+        setTextEditing(false);
+      } else if (e.data?.type === "PIXEL_TEXT_CHANGE") {
+        const { originalHtml, newHtml } = e.data as { originalHtml: string; newHtml: string };
+        setLocalPages(prev => {
+          const current = prev[currentPage];
+          if (!current) return prev;
+          if (!current.includes(originalHtml)) return prev; // can't find — skip silently
+          const updated = current.split(originalHtml).join(newHtml);
+          // Push undo before applying
+          setUndoStacks(u => ({ ...u, [currentPage]: [...(u[currentPage] ?? []), current] }));
+          setRedoStacks(r => ({ ...r, [currentPage]: [] }));
+          setDirtyPages(d => new Set([...d, currentPage]));
+          return { ...prev, [currentPage]: updated };
+          // Note: we do NOT rebuild blobUrl — the iframe DOM is already correct
+        });
       }
     }
     window.addEventListener("message", handler);
@@ -1725,7 +1813,11 @@ export default function SiteEditorPage() {
                 <>
                   <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
                     <div className="flex items-center gap-2 min-w-0">
-                      {blobUrl ? (
+                      {textEditing ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-zing-teal/10 text-zing-teal px-2 py-0.5 rounded-full font-medium whitespace-nowrap animate-pulse">
+                          ✏️ Editing — click away to save
+                        </span>
+                      ) : blobUrl ? (
                         <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                           ⚡ Unsaved preview
                         </span>
