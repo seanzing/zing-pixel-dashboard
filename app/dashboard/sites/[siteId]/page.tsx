@@ -819,9 +819,10 @@ export default function SiteEditorPage() {
               </label>
               <textarea
                 value={site.hours ?? ""}
-                onChange={(e) => setSite({ ...site, hours: e.target.value })}
-                rows={3}
-                className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors resize-none"
+                rows={2}
+                onChange={(e) => { setSite({ ...site, hours: e.target.value }); autoGrow(e.target); }}
+                ref={el => autoGrow(el)}
+                className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors resize-none overflow-hidden leading-snug"
               />
             </div>
             <Field
@@ -1023,10 +1024,12 @@ export default function SiteEditorPage() {
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Page Title</label>
                     <span className={`text-[10px] ${seoData.title.length > 60 ? "text-red-400" : "text-gray-400"}`}>{seoData.title.length}/60</span>
                   </div>
-                  <input
+                  <textarea
                     value={seoData.title}
-                    onChange={e => setSeoData({ ...seoData, title: e.target.value })}
-                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    rows={1}
+                    onChange={e => { setSeoData({ ...seoData, title: e.target.value }); autoGrow(e.target); }}
+                    ref={el => autoGrow(el)}
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                   />
                 </div>
 
@@ -1038,51 +1041,59 @@ export default function SiteEditorPage() {
                   </div>
                   <textarea
                     value={seoData.description}
-                    onChange={e => setSeoData({ ...seoData, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none"
+                    rows={2}
+                    onChange={e => { setSeoData({ ...seoData, description: e.target.value }); autoGrow(e.target); }}
+                    ref={el => autoGrow(el)}
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                   />
                 </div>
 
                 {/* Canonical */}
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Canonical URL</label>
-                  <input
+                  <textarea
                     value={seoData.canonical}
-                    onChange={e => setSeoData({ ...seoData, canonical: e.target.value })}
+                    rows={1}
+                    onChange={e => { setSeoData({ ...seoData, canonical: e.target.value }); autoGrow(e.target); }}
+                    ref={el => autoGrow(el)}
                     placeholder="https://yourdomain.com/"
-                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                   />
                 </div>
 
                 {/* H1 (read-only — edit in AI editor) */}
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">H1 <span className="text-gray-300 normal-case font-normal">(edit in AI Editor)</span></label>
-                  <p className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded px-2.5 py-1.5 truncate">{seoData.h1 || "—"}</p>
+                  <p className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded px-2.5 py-1.5 break-words">{seoData.h1 || "—"}</p>
                 </div>
 
                 {/* OG */}
                 <div className="pt-2 border-t border-gray-100">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Open Graph (Social)</p>
                   <div className="space-y-2">
-                    <input
+                    <textarea
                       value={seoData.ogTitle}
-                      onChange={e => setSeoData({ ...seoData, ogTitle: e.target.value })}
+                      rows={1}
+                      onChange={e => { setSeoData({ ...seoData, ogTitle: e.target.value }); autoGrow(e.target); }}
+                      ref={el => autoGrow(el)}
                       placeholder="OG Title (defaults to page title)"
-                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                     />
                     <textarea
                       value={seoData.ogDescription}
-                      onChange={e => setSeoData({ ...seoData, ogDescription: e.target.value })}
-                      placeholder="OG Description"
                       rows={2}
-                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none"
+                      onChange={e => { setSeoData({ ...seoData, ogDescription: e.target.value }); autoGrow(e.target); }}
+                      ref={el => autoGrow(el)}
+                      placeholder="OG Description"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                     />
-                    <input
+                    <textarea
                       value={seoData.ogImage}
-                      onChange={e => setSeoData({ ...seoData, ogImage: e.target.value })}
+                      rows={1}
+                      onChange={e => { setSeoData({ ...seoData, ogImage: e.target.value }); autoGrow(e.target); }}
+                      ref={el => autoGrow(el)}
                       placeholder="OG Image URL"
-                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none overflow-hidden leading-snug"
                     />
                   </div>
                 </div>
@@ -2028,6 +2039,12 @@ export default function SiteEditorPage() {
   );
 }
 
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = el.scrollHeight + "px";
+}
+
 function Field({
   label,
   value,
@@ -2044,11 +2061,12 @@ function Field({
       <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 truncate" title={label}>
         {label}
       </label>
-      <input
-        type="text"
+      <textarea
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full min-w-0 px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors"
+        rows={1}
+        onChange={(e) => { onChange(e.target.value); autoGrow(e.target); }}
+        ref={(el) => autoGrow(el)}
+        className="w-full min-w-0 px-2.5 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal bg-gray-50 focus:bg-white transition-colors resize-none overflow-hidden leading-snug"
       />
       {helpText && (
         <p className="text-xs text-gray-400 mt-0.5 break-words">{helpText}</p>
