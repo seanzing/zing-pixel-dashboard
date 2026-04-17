@@ -81,6 +81,24 @@ export default function SiteEditorPage() {
   const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
   const [locationPreview, setLocationPreview] = useState<string | null>(null);
 
+  // Left panel tabs
+  const [leftTab, setLeftTab] = useState<"details" | "seo" | "images">("details");
+
+  // SEO panel state
+  const [seoData, setSeoData] = useState<{ title: string; description: string; canonical: string; ogTitle: string; ogDescription: string; ogImage: string; h1: string } | null>(null);
+  const [seoSha, setSeoSha] = useState<string>("");
+  const [seoLoading, setSeoLoading] = useState(false);
+  const [seoSaving, setSeoSaving] = useState(false);
+  const [seoSaved, setSeoSaved] = useState(false);
+
+  // Images/alt text panel state
+  type ImgEntry = { index: number; src: string; alt: string; previewUrl: string; context: string };
+  const [imgList, setImgList] = useState<ImgEntry[]>([]);
+  const [imgSha, setImgSha] = useState<string>("");
+  const [imgLoading, setImgLoading] = useState(false);
+  const [imgSaving, setImgSaving] = useState(false);
+  const [imgSaved, setImgSaved] = useState(false);
+
   // Generate locations modal
   const [showLocModal, setShowLocModal] = useState(false);
   const [locCity, setLocCity] = useState("");
@@ -227,6 +245,56 @@ export default function SiteEditorPage() {
     } catch { /* ignore */ } finally {
       setAnalyticsLoading(false);
     }
+  }
+
+  async function fetchSeo() {
+    setSeoLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/seo`);
+      const data = await res.json();
+      if (data.seo) { setSeoData(data.seo); setSeoSha(data.sha); }
+    } finally { setSeoLoading(false); }
+  }
+
+  async function saveSeo() {
+    if (!seoData) return;
+    setSeoSaving(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/seo`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seo: seoData, sha: seoSha }),
+      });
+      const data = await res.json();
+      if (data.sha) setSeoSha(data.sha);
+      setSeoSaved(true);
+      setTimeout(() => setSeoSaved(false), 2500);
+    } finally { setSeoSaving(false); }
+  }
+
+  async function fetchImages() {
+    setImgLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/images`);
+      const data = await res.json();
+      if (data.images) { setImgList(data.images); setImgSha(data.sha); }
+    } finally { setImgLoading(false); }
+  }
+
+  async function saveImages() {
+    setImgSaving(true);
+    try {
+      const updates = imgList.map(({ index, alt }) => ({ index, alt }));
+      const res = await fetch(`/api/sites/${siteId}/images`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates, sha: imgSha }),
+      });
+      const data = await res.json();
+      if (data.sha) setImgSha(data.sha);
+      setImgSaved(true);
+      setTimeout(() => setImgSaved(false), 2500);
+    } finally { setImgSaving(false); }
   }
 
   async function runGenerateLocations() {
@@ -554,8 +622,34 @@ export default function SiteEditorPage() {
     <div className="flex flex-col h-full">
       {/* Main content: left sidebar + right panel */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Site Details */}
-        <div className="w-72 shrink-0 h-full overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white p-5 min-w-0">
+        {/* Left: Site Details / SEO / Images */}
+        <div className="w-72 shrink-0 h-full flex flex-col overflow-hidden border-r border-gray-200 bg-white min-w-0">
+
+          {/* Tab bar */}
+          <div className="flex shrink-0 border-b border-gray-200 bg-gray-50">
+            {(["details", "seo", "images"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => {
+                  setLeftTab(tab);
+                  if (tab === "seo" && !seoData) fetchSeo();
+                  if (tab === "images" && imgList.length === 0) fetchImages();
+                }}
+                className={`flex-1 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors border-b-2 ${
+                  leftTab === tab
+                    ? "text-zing-teal border-zing-teal bg-white"
+                    : "text-gray-400 border-transparent hover:text-gray-600"
+                }`}
+              >
+                {tab === "details" ? "Details" : tab === "seo" ? "SEO" : "Images"}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 min-w-0">
+
+          {/* ── DETAILS TAB ── */}
+          {leftTab === "details" && (<>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-zing-dark">Site Details</h2>
             <button
@@ -794,7 +888,158 @@ export default function SiteEditorPage() {
               Archive Site
             </button>
           </div>
-        </div>
+          </>)}
+
+          {/* ── SEO TAB ── */}
+          {leftTab === "seo" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-zing-dark">SEO</h2>
+                <button onClick={fetchSeo} disabled={seoLoading} className="text-xs text-zing-teal hover:text-zing-dark disabled:opacity-50">
+                  {seoLoading ? "Loading..." : "↺ Refresh"}
+                </button>
+              </div>
+
+              {seoLoading && <p className="text-xs text-gray-400">Loading...</p>}
+              {!seoLoading && seoData && (<>
+                {/* Title */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Page Title</label>
+                    <span className={`text-[10px] ${seoData.title.length > 60 ? "text-red-400" : "text-gray-400"}`}>{seoData.title.length}/60</span>
+                  </div>
+                  <input
+                    value={seoData.title}
+                    onChange={e => setSeoData({ ...seoData, title: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                </div>
+
+                {/* Meta description */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Meta Description</label>
+                    <span className={`text-[10px] ${seoData.description.length > 160 ? "text-red-400" : "text-gray-400"}`}>{seoData.description.length}/160</span>
+                  </div>
+                  <textarea
+                    value={seoData.description}
+                    onChange={e => setSeoData({ ...seoData, description: e.target.value })}
+                    rows={3}
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none"
+                  />
+                </div>
+
+                {/* Canonical */}
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Canonical URL</label>
+                  <input
+                    value={seoData.canonical}
+                    onChange={e => setSeoData({ ...seoData, canonical: e.target.value })}
+                    placeholder="https://yourdomain.com/"
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                </div>
+
+                {/* H1 (read-only — edit in AI editor) */}
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">H1 <span className="text-gray-300 normal-case font-normal">(edit in AI Editor)</span></label>
+                  <p className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded px-2.5 py-1.5 truncate">{seoData.h1 || "—"}</p>
+                </div>
+
+                {/* OG */}
+                <div className="pt-2 border-t border-gray-100">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Open Graph (Social)</p>
+                  <div className="space-y-2">
+                    <input
+                      value={seoData.ogTitle}
+                      onChange={e => setSeoData({ ...seoData, ogTitle: e.target.value })}
+                      placeholder="OG Title (defaults to page title)"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    />
+                    <textarea
+                      value={seoData.ogDescription}
+                      onChange={e => setSeoData({ ...seoData, ogDescription: e.target.value })}
+                      placeholder="OG Description"
+                      rows={2}
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal resize-none"
+                    />
+                    <input
+                      value={seoData.ogImage}
+                      onChange={e => setSeoData({ ...seoData, ogImage: e.target.value })}
+                      placeholder="OG Image URL"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={saveSeo}
+                  disabled={seoSaving}
+                  className="w-full bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+                >
+                  {seoSaving ? "Saving..." : seoSaved ? "✓ Saved" : "Save SEO"}
+                </button>
+              </>)}
+            </div>
+          )}
+
+          {/* ── IMAGES TAB ── */}
+          {leftTab === "images" && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-zing-dark">Image Alt Text</h2>
+                <button onClick={fetchImages} disabled={imgLoading} className="text-xs text-zing-teal hover:text-zing-dark disabled:opacity-50">
+                  {imgLoading ? "Loading..." : "↺ Refresh"}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mb-4">Alt text improves accessibility and image SEO. Describe what's in each photo.</p>
+
+              {imgLoading && <p className="text-xs text-gray-400">Loading images...</p>}
+
+              {!imgLoading && imgList.length === 0 && (
+                <p className="text-xs text-gray-400">No images found.</p>
+              )}
+
+              {!imgLoading && imgList.length > 0 && (
+                <div className="space-y-3">
+                  {imgList.map((img) => (
+                    <div key={img.index} className="bg-gray-50 border border-gray-200 rounded-lg p-2.5">
+                      <div className="flex gap-2.5 mb-2">
+                        {/* Thumbnail */}
+                        <img
+                          src={img.previewUrl}
+                          alt={img.alt || ""}
+                          className="w-12 h-12 object-cover rounded shrink-0 bg-gray-200"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold text-gray-500 truncate">{img.context}</p>
+                          <p className="text-[10px] text-gray-300 truncate">{img.src}</p>
+                        </div>
+                      </div>
+                      <input
+                        value={img.alt}
+                        onChange={e => setImgList(prev => prev.map(i => i.index === img.index ? { ...i, alt: e.target.value } : i))}
+                        placeholder="Describe this image..."
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                      />
+                    </div>
+                  ))}
+
+                  <button
+                    onClick={saveImages}
+                    disabled={imgSaving}
+                    className="w-full bg-zing-teal text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+                  >
+                    {imgSaving ? "Saving..." : imgSaved ? "✓ Saved" : `Save Alt Text (${imgList.length} images)`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          </div>{/* end scrollable content */}
+        </div>{/* end left sidebar */}
 
         {/* Divider */}
         <div className="w-px bg-gray-200 shrink-0" />
