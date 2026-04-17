@@ -85,10 +85,11 @@ export default function SiteEditorPage() {
   const [conflictError, setConflictError] = useState<string | null>(null);
 
   // Local HTML edit state (undo/redo)
-  const [localHtml, setLocalHtml] = useState<string | null>(null);
-  const [undoStack, setUndoStack] = useState<string[]>([]);
-  const [redoStack, setRedoStack] = useState<string[]>([]);
-  const [isDirty, setIsDirty] = useState(false);
+  // Per-page local edit state — all pages held in memory simultaneously
+  const [localPages, setLocalPages] = useState<Record<string, string>>({});
+  const [undoStacks, setUndoStacks] = useState<Record<string, string[]>>({});
+  const [redoStacks, setRedoStacks] = useState<Record<string, string[]>>({});
+  const [dirtyPages, setDirtyPages] = useState<Set<string>>(new Set());
   const [htmlDeploying, setHtmlDeploying] = useState(false);
 
   // Click-to-replace image state
@@ -103,6 +104,32 @@ export default function SiteEditorPage() {
   type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
   const [pages, setPages] = useState<PageEntry[]>([]);
   const [currentPage, setCurrentPage] = useState("index.html");
+
+  // Derived per-page aliases (after currentPage is declared)
+  const localHtml = localPages[currentPage] ?? null;
+  const undoStack = undoStacks[currentPage] ?? [];
+  const redoStack = redoStacks[currentPage] ?? [];
+  const isDirty = dirtyPages.has(currentPage);
+  const dirtyCount = dirtyPages.size;
+
+  // Per-page state mutation helpers
+  function setPageHtml(page: string, html: string) {
+    setLocalPages(prev => ({ ...prev, [page]: html }));
+  }
+  function markDirty(page: string) {
+    setDirtyPages(prev => new Set([...prev, page]));
+  }
+  function markClean(page: string) {
+    setDirtyPages(prev => { const n = new Set(prev); n.delete(page); return n; });
+  }
+  function pushUndo(page: string, html: string) {
+    setUndoStacks(prev => ({ ...prev, [page]: [...(prev[page] ?? []), html] }));
+  }
+  function clearPageHistory(page: string) {
+    setUndoStacks(prev => { const n = { ...prev }; delete n[page]; return n; });
+    setRedoStacks(prev => { const n = { ...prev }; delete n[page]; return n; });
+  }
+
   const [showNewPageModal, setShowNewPageModal] = useState(false);
   const [newPageName, setNewPageName] = useState("");
   const [newPageSlug, setNewPageSlug] = useState("");
@@ -373,37 +400,61 @@ export default function SiteEditorPage() {
 
   async function loadInteractivePreview() {
     // Use local unsaved HTML if present, otherwise fetch from GitHub
-    const html = localHtml ?? await (async () => {
+    let html = localPages[currentPage] ?? null;
+    if (!html) {
       const res = await fetch(`/api/sites/${siteId}/raw?page=${currentPage}`);
-      if (!res.ok) return null;
+      if (!res.ok) return;
       const d = await res.json();
-      if (!localHtml) setLocalHtml(d.html); // seed local state from GitHub
-      return d.html as string;
-    })();
+      html = d.html as string;
+      setPageHtml(currentPage, html); // seed local state from GitHub
+    }
     if (!html) return;
     revokeBlobUrl();
     const preview = buildBlobPreview(html, siteId, true);
-    const blob = new Blob([preview], { type: "text/html" });
-    setBlobUrl(URL.createObjectURL(blob));
+    setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
     setPreviewKey((k) => k + 1);
+  }
+
+  async function deployPage(page: string): Promise<string | null> {
+    const html = localPages[page];
+    if (!html) return null;
+    const res = await fetch(`/api/sites/${siteId}/deploy-html`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html, page }),
+    });
+    const data = await res.json();
+    if (data.conflict) { setConflictError(data.error); return null; }
+    if (!res.ok) throw new Error(data.error ?? `Deploy failed for ${page}`);
+    markClean(page);
+    clearPageHistory(page);
+    return data.commitSha as string;
   }
 
   async function deployLocalHtml() {
     if (!localHtml || !isDirty) return;
     setHtmlDeploying(true);
     try {
-      const res = await fetch(`/api/sites/${siteId}/deploy-html`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ html: localHtml, page: currentPage }),
-      });
-      const data = await res.json();
-      if (data.conflict) { setConflictError(data.error); return; }
-      if (!res.ok) throw new Error(data.error ?? "Deploy failed");
-      setIsDirty(false);
-      setUndoStack([]);
-      setRedoStack([]);
-      if (data.commitSha) pollDeployStatus(data.commitSha);
+      const sha = await deployPage(currentPage);
+      if (sha) pollDeployStatus(sha);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setHtmlDeploying(false);
+    }
+  }
+
+  async function deployAllPages() {
+    if (dirtyCount === 0) return;
+    setHtmlDeploying(true);
+    let lastSha: string | null = null;
+    try {
+      for (const page of Array.from(dirtyPages)) {
+        const sha = await deployPage(page);
+        if (sha) lastSha = sha;
+        await new Promise(r => setTimeout(r, 300)); // avoid SHA conflicts on sequential writes
+      }
+      if (lastSha) pollDeployStatus(lastSha);
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -427,16 +478,19 @@ export default function SiteEditorPage() {
         setImgReplaceError(data.error || "Upload failed");
         return;
       }
+      // Image replace commits directly — sync local state so it stays consistent
+      setPageHtml(currentPage, data.html);
+      markClean(currentPage); // already committed
+      clearPageHistory(currentPage);
       // Rebuild the blob preview with the updated HTML (interactive)
       revokeBlobUrl();
       const preview = buildBlobPreview(data.html, siteId, true);
-      const blob = new Blob([preview], { type: "text/html" });
-      setBlobUrl(URL.createObjectURL(blob));
+      setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
       setPreviewKey((k) => k + 1);
       setImgReplaceSuccess(true);
       setSelectedImg(null);
       setImgReplaceFile(null);
-      // Trigger deploy (commit already happened in upload API)
+      // Trigger CF Pages deploy (commit already happened in upload API)
       if (data.commitSha) pollDeployStatus(data.commitSha);
       setTimeout(() => setImgReplaceSuccess(false), 3000);
     } catch (err) {
@@ -793,55 +847,53 @@ export default function SiteEditorPage() {
     function onKey(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
-      // Skip when typing in inputs/textareas
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
+      const stack = undoStacks[currentPage] ?? [];
+      const rstack = redoStacks[currentPage] ?? [];
+      const cur = localPages[currentPage] ?? null;
+
       if (e.key === "z" && !e.shiftKey) {
+        if (!stack.length) return;
         e.preventDefault();
-        setUndoStack(prev => {
-          if (!prev.length) return prev;
-          const next = [...prev];
-          const restoreHtml = next.pop()!;
-          setRedoStack(r => localHtml ? [...r, localHtml] : r);
-          setLocalHtml(restoreHtml);
-          setIsDirty(true);
-          revokeBlobUrl();
-          const preview = buildBlobPreview(restoreHtml, siteId, true);
-          const blob = new Blob([preview], { type: "text/html" });
-          setBlobUrl(URL.createObjectURL(blob));
-          setPreviewKey(k => k + 1);
-          setRightTab("preview");
-          return next;
-        });
+        const prevHtmls = [...stack];
+        const restoreHtml = prevHtmls.pop()!;
+        setUndoStacks(prev => ({ ...prev, [currentPage]: prevHtmls }));
+        if (cur) setRedoStacks(prev => ({ ...prev, [currentPage]: [...(prev[currentPage] ?? []), cur] }));
+        setLocalPages(prev => ({ ...prev, [currentPage]: restoreHtml }));
+        setDirtyPages(prev => new Set([...prev, currentPage]));
+        revokeBlobUrl();
+        const preview = buildBlobPreview(restoreHtml, siteId, true);
+        setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
+        setPreviewKey(k => k + 1);
+        setRightTab("preview");
+
       } else if (e.key === "z" && e.shiftKey) {
+        if (!rstack.length) return;
         e.preventDefault();
-        setRedoStack(prev => {
-          if (!prev.length) return prev;
-          const next = [...prev];
-          const restoreHtml = next.pop()!;
-          setUndoStack(u => localHtml ? [...u, localHtml] : u);
-          setLocalHtml(restoreHtml);
-          setIsDirty(true);
-          revokeBlobUrl();
-          const preview = buildBlobPreview(restoreHtml, siteId, true);
-          const blob = new Blob([preview], { type: "text/html" });
-          setBlobUrl(URL.createObjectURL(blob));
-          setPreviewKey(k => k + 1);
-          setRightTab("preview");
-          return next;
-        });
+        const prevHtmls = [...rstack];
+        const restoreHtml = prevHtmls.pop()!;
+        setRedoStacks(prev => ({ ...prev, [currentPage]: prevHtmls }));
+        if (cur) setUndoStacks(prev => ({ ...prev, [currentPage]: [...(prev[currentPage] ?? []), cur] }));
+        setLocalPages(prev => ({ ...prev, [currentPage]: restoreHtml }));
+        setDirtyPages(prev => new Set([...prev, currentPage]));
+        revokeBlobUrl();
+        const preview = buildBlobPreview(restoreHtml, siteId, true);
+        setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
+        setPreviewKey(k => k + 1);
+        setRightTab("preview");
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localHtml, siteId]);
+  }, [localPages, undoStacks, redoStacks, currentPage, siteId]);
 
   // Warn before closing with unsaved edits
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
-      if (isDirty) {
+      if (dirtyCount > 0) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -949,10 +1001,10 @@ export default function SiteEditorPage() {
       ]);
       if (data.html) {
         // Push current state to undo stack before applying new edit
-        setUndoStack(prev => localHtml ? [...prev, localHtml] : prev);
-        setRedoStack([]);
-        setLocalHtml(data.html);
-        setIsDirty(true);
+        if (localHtml) pushUndo(currentPage, localHtml);
+        setRedoStacks(prev => ({ ...prev, [currentPage]: [] }));
+        setPageHtml(currentPage, data.html);
+        markDirty(currentPage);
         // Update blob preview
         revokeBlobUrl();
         const preview = buildBlobPreview(data.html, siteId, true);
@@ -1493,12 +1545,7 @@ export default function SiteEditorPage() {
               <button
                 key={p.filename}
                 onClick={() => {
-                  if (isDirty && !confirm("You have unsaved edits on this page. Switch anyway? Changes will be lost.")) return;
                   setCurrentPage(p.filename);
-                  setLocalHtml(null);
-                  setUndoStack([]);
-                  setRedoStack([]);
-                  setIsDirty(false);
                   setBlobUrl(null);
                   setLocationPreview(null);
                   setSeoData(null);
@@ -1513,6 +1560,9 @@ export default function SiteEditorPage() {
               >
                 {p.isHome && <span className="text-[10px]">🏠</span>}
                 {p.label}
+                {dirtyPages.has(p.filename) && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" title="Unsaved edits" />
+                )}
                 {!p.isHome && currentPage === p.filename && (
                   <span
                     onClick={(e) => { e.stopPropagation(); deletePage(p.filename); }}
@@ -1989,27 +2039,39 @@ export default function SiteEditorPage() {
           )}
 
           {/* Unsaved edits indicator */}
-          {isDirty && (
+          {dirtyCount > 0 && (
             <span className="inline-flex items-center gap-1 text-xs text-amber-600 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              Unsaved edits
-              {undoStack.length > 0 && (
-                <span className="text-gray-400 font-normal ml-0.5">({undoStack.length} undo{undoStack.length !== 1 ? "s" : ""})</span>
+              {dirtyCount === 1 ? "1 page unsaved" : `${dirtyCount} pages unsaved`}
+              {undoStack.length > 0 && isDirty && (
+                <span className="text-gray-400 font-normal ml-0.5">· {undoStack.length} undo{undoStack.length !== 1 ? "s" : ""}</span>
               )}
             </span>
           )}
 
+          {/* Deploy This Page */}
           <button
             onClick={deployLocalHtml}
             disabled={!isDirty || htmlDeploying || deployState === "in_progress" || deployState === "queued"}
-            className={`px-4 py-1.5 rounded text-xs font-semibold transition-colors disabled:opacity-40 ${
+            className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors disabled:opacity-40 ${
               isDirty
                 ? "bg-zing-teal text-white hover:bg-zing-dark"
                 : "bg-gray-100 text-gray-400 cursor-default"
             }`}
           >
-            {htmlDeploying ? "Committing..." : isDirty ? "Deploy Edits" : "No Changes"}
+            {htmlDeploying && isDirty ? "Saving..." : "Deploy This Page"}
           </button>
+
+          {/* Deploy All — only shown when multiple pages are dirty */}
+          {dirtyCount > 1 && (
+            <button
+              onClick={deployAllPages}
+              disabled={htmlDeploying || deployState === "in_progress" || deployState === "queued"}
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-zing-dark text-white hover:bg-zing-teal transition-colors disabled:opacity-40"
+            >
+              {htmlDeploying ? "Deploying..." : `Deploy All (${dirtyCount})`}
+            </button>
+          )}
           {currentPage === "index.html" && (
             <button
               onClick={() => setShowLocModal(true)}
