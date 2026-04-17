@@ -84,6 +84,13 @@ export default function SiteEditorPage() {
   // Concurrent edit conflict
   const [conflictError, setConflictError] = useState<string | null>(null);
 
+  // Local HTML edit state (undo/redo)
+  const [localHtml, setLocalHtml] = useState<string | null>(null);
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [isDirty, setIsDirty] = useState(false);
+  const [htmlDeploying, setHtmlDeploying] = useState(false);
+
   // Click-to-replace image state
   const [selectedImg, setSelectedImg] = useState<{ index: number; rawSrc: string; resolvedSrc: string; kind: "img" | "bg" } | null>(null);
   const [imgReplaceFile, setImgReplaceFile] = useState<File | null>(null);
@@ -365,14 +372,43 @@ export default function SiteEditorPage() {
   }
 
   async function loadInteractivePreview() {
-    const res = await fetch(`/api/sites/${siteId}/raw?page=${currentPage}`);
-    if (!res.ok) return;
-    const { html } = await res.json();
+    // Use local unsaved HTML if present, otherwise fetch from GitHub
+    const html = localHtml ?? await (async () => {
+      const res = await fetch(`/api/sites/${siteId}/raw?page=${currentPage}`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (!localHtml) setLocalHtml(d.html); // seed local state from GitHub
+      return d.html as string;
+    })();
+    if (!html) return;
     revokeBlobUrl();
     const preview = buildBlobPreview(html, siteId, true);
     const blob = new Blob([preview], { type: "text/html" });
     setBlobUrl(URL.createObjectURL(blob));
     setPreviewKey((k) => k + 1);
+  }
+
+  async function deployLocalHtml() {
+    if (!localHtml || !isDirty) return;
+    setHtmlDeploying(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/deploy-html`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: localHtml, page: currentPage }),
+      });
+      const data = await res.json();
+      if (data.conflict) { setConflictError(data.error); return; }
+      if (!res.ok) throw new Error(data.error ?? "Deploy failed");
+      setIsDirty(false);
+      setUndoStack([]);
+      setRedoStack([]);
+      if (data.commitSha) pollDeployStatus(data.commitSha);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setHtmlDeploying(false);
+    }
   }
 
   async function handleImageReplace() {
@@ -752,6 +788,68 @@ export default function SiteEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
+  // Undo/Redo keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      // Skip when typing in inputs/textareas
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        setUndoStack(prev => {
+          if (!prev.length) return prev;
+          const next = [...prev];
+          const restoreHtml = next.pop()!;
+          setRedoStack(r => localHtml ? [...r, localHtml] : r);
+          setLocalHtml(restoreHtml);
+          setIsDirty(true);
+          revokeBlobUrl();
+          const preview = buildBlobPreview(restoreHtml, siteId, true);
+          const blob = new Blob([preview], { type: "text/html" });
+          setBlobUrl(URL.createObjectURL(blob));
+          setPreviewKey(k => k + 1);
+          setRightTab("preview");
+          return next;
+        });
+      } else if (e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        setRedoStack(prev => {
+          if (!prev.length) return prev;
+          const next = [...prev];
+          const restoreHtml = next.pop()!;
+          setUndoStack(u => localHtml ? [...u, localHtml] : u);
+          setLocalHtml(restoreHtml);
+          setIsDirty(true);
+          revokeBlobUrl();
+          const preview = buildBlobPreview(restoreHtml, siteId, true);
+          const blob = new Blob([preview], { type: "text/html" });
+          setBlobUrl(URL.createObjectURL(blob));
+          setPreviewKey(k => k + 1);
+          setRightTab("preview");
+          return next;
+        });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localHtml, siteId]);
+
+  // Warn before closing with unsaved edits
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
   // postMessage listener for interactive preview image clicks
   useEffect(() => {
     function handler(e: MessageEvent) {
@@ -809,7 +907,7 @@ export default function SiteEditorPage() {
   }
 
   async function handleDeploy(type: "preview" | "production") {
-    setDeploying(true);
+    setHtmlDeploying(true);
     const res = await fetch("/api/deploy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -819,7 +917,7 @@ export default function SiteEditorPage() {
     if (data.url) {
       await fetchSite();
     }
-    setDeploying(false);
+    setHtmlDeploying(false);
     if (data.commitSha) {
       pollDeployStatus(data.commitSha);
     }
@@ -849,17 +947,20 @@ export default function SiteEditorPage() {
         ...prev,
         { role: "assistant", content: data.changes },
       ]);
-      // Instant preview — no deploy needed
       if (data.html) {
+        // Push current state to undo stack before applying new edit
+        setUndoStack(prev => localHtml ? [...prev, localHtml] : prev);
+        setRedoStack([]);
+        setLocalHtml(data.html);
+        setIsDirty(true);
+        // Update blob preview
         revokeBlobUrl();
         const preview = buildBlobPreview(data.html, siteId, true);
         const blob = new Blob([preview], { type: "text/html" });
-        const url = URL.createObjectURL(blob);
-        setBlobUrl(url);
+        setBlobUrl(URL.createObjectURL(blob));
         setRightTab("preview");
         setPreviewKey((k) => k + 1);
       }
-      await fetchSite();
     } else if (data.conflict) {
       setConflictError(data.error);
     } else if (data.error) {
@@ -1392,7 +1493,12 @@ export default function SiteEditorPage() {
               <button
                 key={p.filename}
                 onClick={() => {
+                  if (isDirty && !confirm("You have unsaved edits on this page. Switch anyway? Changes will be lost.")) return;
                   setCurrentPage(p.filename);
+                  setLocalHtml(null);
+                  setUndoStack([]);
+                  setRedoStack([]);
+                  setIsDirty(false);
                   setBlobUrl(null);
                   setLocationPreview(null);
                   setSeoData(null);
@@ -1882,19 +1988,27 @@ export default function SiteEditorPage() {
             <span className="text-xs text-gray-500">Committing...</span>
           )}
 
+          {/* Unsaved edits indicator */}
+          {isDirty && (
+            <span className="inline-flex items-center gap-1 text-xs text-amber-600 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              Unsaved edits
+              {undoStack.length > 0 && (
+                <span className="text-gray-400 font-normal ml-0.5">({undoStack.length} undo{undoStack.length !== 1 ? "s" : ""})</span>
+              )}
+            </span>
+          )}
+
           <button
-            onClick={() => handleDeploy("preview")}
-            disabled={deploying || deployState === "in_progress" || deployState === "queued"}
-            className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+            onClick={deployLocalHtml}
+            disabled={!isDirty || htmlDeploying || deployState === "in_progress" || deployState === "queued"}
+            className={`px-4 py-1.5 rounded text-xs font-semibold transition-colors disabled:opacity-40 ${
+              isDirty
+                ? "bg-zing-teal text-white hover:bg-zing-dark"
+                : "bg-gray-100 text-gray-400 cursor-default"
+            }`}
           >
-            Preview
-          </button>
-          <button
-            onClick={() => handleDeploy("production")}
-            disabled={deploying || deployState === "in_progress" || deployState === "queued"}
-            className="bg-zing-teal text-white px-4 py-1.5 rounded text-xs font-semibold hover:bg-zing-dark transition-colors disabled:opacity-50"
-          >
-            Push to Production
+            {htmlDeploying ? "Committing..." : isDirty ? "Deploy Edits" : "No Changes"}
           </button>
           {currentPage === "index.html" && (
             <button

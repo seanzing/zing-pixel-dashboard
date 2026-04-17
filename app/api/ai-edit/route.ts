@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient, createServerSupabaseClient } from "@/lib/supabase/server";
 import { processAiEdit } from "@/lib/ai";
-import { getFile, writeFile, StaleShaError } from "@/lib/github";
+import { getFile, StaleShaError } from "@/lib/github";
 
 export async function POST(request: Request) {
   const { siteId, message, chatHistory, page = "index.html" } = await request.json();
@@ -30,16 +30,7 @@ export async function POST(request: Request) {
   try {
     const result = await processAiEdit(currentHtml, message, chatHistory ?? []);
 
-    // Write updated HTML to GitHub — commit triggers Cloudflare deploy via Actions
-    const commitMsg = `edit(${siteId}/${page}): ${result.changes.slice(0, 72)}`;
-    const commitSha = await writeFile(
-      `${siteId}/${page}`,
-      result.html,
-      commitMsg,
-      file.sha
-    );
-
-    // Save chat messages (scoped to page)
+    // Save chat messages (scoped to page) — edit is local until user deploys
     await supabase.from("chat_messages").insert([
       { site_id: siteId, page, role: "user", content: message },
       { site_id: siteId, page, role: "assistant", content: result.changes },
@@ -51,20 +42,10 @@ export async function POST(request: Request) {
       .update({ updated_at: new Date().toISOString() })
       .eq("id", siteId);
 
-    // Log the edit (includes commit SHA for full audit trail)
-    await supabase.from("edit_log").insert({
-      site_id: siteId,
-      user_email: deployedBy,
-      action: "ai_edit",
-      summary: message.slice(0, 200),
-      commit_sha: commitSha,
-      commit_message: commitMsg.slice(0, 255),
-    }).then(() => {});
-
+    // Return updated HTML — client holds it locally until user clicks Deploy
     return NextResponse.json({
       changes: result.changes,
       html: result.html,
-      previewUrl: `https://${siteId}.pages.dev`,
     });
   } catch (err) {
     if (err instanceof StaleShaError) {
