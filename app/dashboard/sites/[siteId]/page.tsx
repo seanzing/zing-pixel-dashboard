@@ -309,7 +309,8 @@ export default function SiteEditorPage() {
       colorHex.value = color;
       colorPanel.style.display = 'none';
     }
-    colorBtn.addEventListener('click', function() {
+    colorBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); // keep selection intact when toggling the panel
       colorPanel.style.display = colorPanel.style.display === 'none' ? 'block' : 'none';
     });
     colorHex.addEventListener('input', function() {
@@ -367,7 +368,9 @@ export default function SiteEditorPage() {
 
     document.body.appendChild(toolbar);
 
-    // Toolbar mousedown — save selection then prevent blur on editing element
+    // Toolbar mousedown — unconditionally prevent blur/focus-change from any toolbar element.
+    // This is the CATCH-ALL backup, but each individual handler also calls e.preventDefault()
+    // at target phase (which is more reliable — some browsers finalise focus before bubble fires).
     toolbar.addEventListener('mousedown', function(e) {
       var sel = window.getSelection();
       if (sel && sel.rangeCount > 0 && _editingEl && _editingEl.contains(sel.anchorNode)) {
@@ -376,20 +379,21 @@ export default function SiteEditorPage() {
       if (e.target !== pxInput && e.target !== document.getElementById('pixel-color-hex')) e.preventDefault();
     });
 
-    // All formatting/action buttons use mousedown (not click) so the
-    // browser hasn't yet processed focus changes — selection is guaranteed intact.
+    // e.preventDefault() on EACH handler (target phase) — guarantees selection is intact
+    // regardless of browser behaviour during the mousedown dispatch cycle.
     toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
       b.addEventListener('mousedown', function(e) {
+        e.preventDefault();
         if (!_editingEl) return;
         document.execCommand(b.getAttribute('data-cmd'));
         updateToolbarState();
       });
     });
     toolbar.querySelectorAll('[data-list]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) { convertToList(b.getAttribute('data-list')); });
+      b.addEventListener('mousedown', function(e) { e.preventDefault(); convertToList(b.getAttribute('data-list')); });
     });
     toolbar.querySelectorAll('[data-tag]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) { convertTag(b.getAttribute('data-tag')); });
+      b.addEventListener('mousedown', function(e) { e.preventDefault(); convertTag(b.getAttribute('data-tag')); });
     });
     pxInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.key === 'Tab') {
@@ -403,21 +407,23 @@ export default function SiteEditorPage() {
       if (px > 0 && _editingEl) _editingEl.style.fontSize = px + 'px';
     });
 
-    // Alignment buttons — mousedown
+    // Alignment buttons
     toolbar.querySelectorAll('[data-align]').forEach(function(b) {
       b.addEventListener('mousedown', function(e) {
+        e.preventDefault();
         if (!_editingEl) return;
         _editingEl.style.textAlign = b.getAttribute('data-align');
         updateToolbarState();
       });
     });
 
-    // Clear formatting — mousedown
+    // Clear formatting
     toolbar.querySelectorAll('[data-action="clear"]').forEach(function(b) {
       b.addEventListener('mousedown', function(e) {
+        e.preventDefault();
         if (!_editingEl) return;
-        document.execCommand('removeFormat'); // strips bold/italic/underline from selection
-        removeColorSpans(_editingEl);         // strips <span style="color:"> nodes
+        document.execCommand('removeFormat');
+        removeColorSpans(_editingEl);
         _editingEl.style.fontSize = '';
         _editingEl.style.fontFamily = '';
         _editingEl.style.textAlign = '';
@@ -426,9 +432,10 @@ export default function SiteEditorPage() {
       });
     });
 
-    // Aa button — opens font picker in parent
+    // Aa button — mousedown (not click) so selection isn't lost before postMessage fires
     toolbar.querySelectorAll('[data-action="font"]').forEach(function(b) {
-      b.addEventListener('click', function() {
+      b.addEventListener('mousedown', function(e) {
+        e.preventDefault();
         window.parent.postMessage({ type: 'PIXEL_OPEN_FONT_PICKER' }, '*');
       });
     });
