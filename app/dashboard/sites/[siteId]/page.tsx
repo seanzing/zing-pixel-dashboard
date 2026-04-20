@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import FontPicker from "@/components/FontPicker";
 
 
 interface Site {
@@ -94,7 +95,10 @@ export default function SiteEditorPage() {
 
   // Text editing state
   const [textEditing, setTextEditing] = useState(false);
+  const [showFontPicker, setShowFontPicker] = useState(false);
+  const [currentFont, setCurrentFont] = useState<string | undefined>();
   const pendingRebuildRef = useRef(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Click-to-replace image state
   const [selectedImg, setSelectedImg] = useState<{ index: number; rawSrc: string; resolvedSrc: string; kind: "img" | "bg" } | null>(null);
@@ -239,6 +243,8 @@ export default function SiteEditorPage() {
     pxInput.type = 'number'; pxInput.id = 'pixel-px-input';
     pxInput.placeholder = '–'; pxInput.min = '8'; pxInput.max = '200';
     toolbar.appendChild(pxInput);
+    sep();
+    btn('Aa', 'Font family', {'data-action': 'font'});
 
     document.body.appendChild(toolbar);
 
@@ -271,6 +277,13 @@ export default function SiteEditorPage() {
     pxInput.addEventListener('change', function() {
       var px = parseInt(pxInput.value);
       if (px > 0 && _editingEl) _editingEl.style.fontSize = px + 'px';
+    });
+
+    // Aa button — opens font picker in parent
+    toolbar.querySelectorAll('[data-action="font"]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        window.parent.postMessage({ type: 'PIXEL_OPEN_FONT_PICKER' }, '*');
+      });
     });
   }
 
@@ -458,6 +471,31 @@ export default function SiteEditorPage() {
       }
     });
   }
+
+  // Handle font application from parent
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.type !== 'PIXEL_APPLY_FONT') return;
+    var family = e.data.fontFamily;
+    var href = e.data.linkHref;
+    if (!family) return;
+    // Inject link into head if not already present
+    if (href && !document.querySelector('link[data-pixel-font="' + family + '"]')) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet'; link.href = href;
+      link.setAttribute('data-pixel-font', family);
+      document.head.appendChild(link);
+    }
+    if (_editingEl) {
+      _editingEl.style.fontFamily = "'" + family + "', " + (family.match(/[Mm]ono|[Cc]ode|[Cc]ourier|[Ss]pace [Mm]ono|[Ff]ira [Cc]ode/) ? 'monospace' : 'sans-serif');
+      // Report back: the element change + the link tag to persist
+      window.parent.postMessage({
+        type: 'PIXEL_FONT_LINK',
+        linkHref: href,
+        fontFamily: family,
+      }, '*');
+      updateToolbarState();
+    }
+  });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
@@ -944,6 +982,15 @@ export default function SiteEditorPage() {
     }
   }
 
+  function applyFont(family: string, linkHref: string) {
+    setCurrentFont(family);
+    // Send font down to iframe
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "PIXEL_APPLY_FONT", fontFamily: family, linkHref },
+      "*"
+    );
+  }
+
   // Rebuild blob when structural text changes (tag/list conversion) are pending
   useEffect(() => {
     if (!pendingRebuildRef.current) return;
@@ -1128,6 +1175,26 @@ export default function SiteEditorPage() {
         setSelectedImg(null); // close image panel if open
       } else if (e.data?.type === "PIXEL_TEXT_END") {
         setTextEditing(false);
+        setShowFontPicker(false);
+      } else if (e.data?.type === "PIXEL_OPEN_FONT_PICKER") {
+        setShowFontPicker(prev => !prev); // toggle
+      } else if (e.data?.type === "PIXEL_FONT_LINK") {
+        // Inject the Google Fonts <link> into <head> of localHtml so it persists on deploy
+        const { linkHref } = e.data as { linkHref: string };
+        if (!linkHref) return;
+        setLocalPages(prev => {
+          const current = prev[currentPage];
+          if (!current) return prev;
+          // Skip if already present
+          if (current.includes(linkHref)) return prev;
+          // Remove any previous pixel font link for the same family
+          const stripped = current.replace(/<link[^>]+data-pixel-font[^>]+>/g, "");
+          const tag = `<link rel="stylesheet" href="${linkHref}" data-pixel-font="true">`;
+          const updated = stripped.includes("</head>")
+            ? stripped.replace("</head>", `${tag}\n</head>`)
+            : tag + stripped;
+          return { ...prev, [currentPage]: updated };
+        });
       } else if (e.data?.type === "PIXEL_TEXT_CHANGE") {
         const { originalHtml, newHtml, needsRebuild } = e.data as { originalHtml: string; newHtml: string; needsRebuild?: boolean };
         setLocalPages(prev => {
@@ -1949,9 +2016,31 @@ export default function SiteEditorPage() {
                   <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
                     <div className="flex items-center gap-2 min-w-0">
                       {textEditing ? (
-                        <span className="inline-flex items-center gap-1 text-xs bg-zing-teal/10 text-zing-teal px-2 py-0.5 rounded-full font-medium whitespace-nowrap animate-pulse">
-                          ✏️ Editing — click away to save
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 text-xs bg-zing-teal/10 text-zing-teal px-2 py-0.5 rounded-full font-medium whitespace-nowrap animate-pulse">
+                            ✏️ Editing — click away to save
+                          </span>
+                          {/* Font picker trigger */}
+                          <div className="relative">
+                            <button
+                              onClick={() => setShowFontPicker(p => !p)}
+                              className={`text-xs px-2 py-0.5 rounded-full font-semibold border transition-colors ${
+                                showFontPicker
+                                  ? "bg-zing-teal text-white border-zing-teal"
+                                  : "border-gray-300 text-gray-600 hover:border-zing-teal hover:text-zing-teal"
+                              }`}
+                            >
+                              Aa {currentFont ? `· ${currentFont}` : ""}
+                            </button>
+                            {showFontPicker && (
+                              <FontPicker
+                                currentFont={currentFont}
+                                onSelect={applyFont}
+                                onClose={() => setShowFontPicker(false)}
+                              />
+                            )}
+                          </div>
+                        </div>
                       ) : blobUrl ? (
                         <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                           ⚡ Unsaved preview
@@ -2055,6 +2144,7 @@ export default function SiteEditorPage() {
 
                     {deviceView === "desktop" ? (
                       <iframe
+                        ref={iframeRef}
                         key={`${previewKey}-desktop-${locationPreview ?? ""}`}
                         src={locationPreview ?? blobUrl ?? site.preview_url ?? ""}
                         className="w-full h-full border-0 bg-white"
