@@ -226,6 +226,7 @@ export default function SiteEditorPage() {
   var _imgSelected = null;
   var _editingEl = null;
   var _editingOrigHtml = '';
+  var _savedRange = null; // selection preserved across toolbar clicks
   var toolbar, pxInput;
 
   // ─── Toolbar Build ────────────────────────────────────────────────────────
@@ -297,11 +298,31 @@ export default function SiteEditorPage() {
     colorWrap.appendChild(colorPanel);
     toolbar.appendChild(colorWrap);
 
-    // Color panel logic
+    // Color panel logic — direct DOM approach (more reliable than execCommand foreColor)
     function applyColor(color) {
       if (!_editingEl) return;
-      document.execCommand('styleWithCSS', false, 'true');
-      document.execCommand('foreColor', false, color);
+      restoreSelection();
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed && _editingEl.contains(sel.anchorNode)) {
+        // Wrap selected text in a color span
+        var range = sel.getRangeAt(0);
+        var span = document.createElement('span');
+        span.style.color = color;
+        try {
+          range.surroundContents(span);
+        } catch(e) {
+          // Selection spans partial elements — extract and rewrap
+          var frag = range.extractContents();
+          span.appendChild(frag);
+          range.insertNode(span);
+          range.setStartAfter(span); range.collapse(true);
+          sel.removeAllRanges(); sel.addRange(range);
+        }
+      } else {
+        // No selection — apply color to entire element
+        _editingEl.style.color = color;
+      }
+      // Update indicator
       var ind = document.getElementById('pixel-color-indicator');
       if (ind) ind.style.borderBottomColor = color;
       colorPreview.style.background = color;
@@ -327,8 +348,8 @@ export default function SiteEditorPage() {
     colorNone.addEventListener('mousedown', function(e) {
       e.preventDefault();
       if (!_editingEl) return;
-      document.execCommand('styleWithCSS', false, 'true');
-      document.execCommand('foreColor', false, 'inherit');
+      removeColorSpans(_editingEl);
+      _editingEl.style.color = '';
       var ind = document.getElementById('pixel-color-indicator');
       if (ind) ind.style.borderBottomColor = '#ffffff';
       colorPanel.style.display = 'none';
@@ -367,14 +388,19 @@ export default function SiteEditorPage() {
 
     document.body.appendChild(toolbar);
 
-    // Toolbar mousedown — prevent blur on editing element
+    // Toolbar mousedown — save selection then prevent blur on editing element
     toolbar.addEventListener('mousedown', function(e) {
-      if (e.target !== pxInput) e.preventDefault();
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && _editingEl && _editingEl.contains(sel.anchorNode)) {
+        _savedRange = sel.getRangeAt(0).cloneRange();
+      }
+      if (e.target !== pxInput && e.target !== document.getElementById('pixel-color-hex')) e.preventDefault();
     });
 
     toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
       b.addEventListener('click', function() {
         if (!_editingEl) return;
+        restoreSelection();
         document.execCommand(b.getAttribute('data-cmd'));
         _editingEl.focus();
         updateToolbarState();
@@ -411,7 +437,9 @@ export default function SiteEditorPage() {
     toolbar.querySelectorAll('[data-action="clear"]').forEach(function(b) {
       b.addEventListener('click', function() {
         if (!_editingEl) return;
-        document.execCommand('removeFormat');
+        restoreSelection();
+        document.execCommand('removeFormat'); // strips bold/italic/underline from selection
+        removeColorSpans(_editingEl);         // strips <span style="color:"> nodes
         _editingEl.style.fontSize = '';
         _editingEl.style.fontFamily = '';
         _editingEl.style.textAlign = '';
@@ -441,8 +469,9 @@ export default function SiteEditorPage() {
     toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
       try { b.classList.toggle('px-active', document.queryCommandState(b.getAttribute('data-cmd'))); } catch(e) {}
     });
-    // Alignment
-    var align = _editingEl.style.textAlign || window.getComputedStyle(_editingEl).textAlign || 'left';
+    // Alignment — normalise 'start' → 'left', 'end' → 'right'
+    var rawAlign = _editingEl.style.textAlign || window.getComputedStyle(_editingEl).textAlign || 'left';
+    var align = rawAlign === 'start' ? 'left' : rawAlign === 'end' ? 'right' : rawAlign;
     toolbar.querySelectorAll('[data-align]').forEach(function(b) {
       b.classList.toggle('px-active', b.getAttribute('data-align') === align);
     });
@@ -482,6 +511,28 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
+  // Restore the saved selection into _editingEl
+  function restoreSelection() {
+    if (!_editingEl) return;
+    _editingEl.focus();
+    if (_savedRange) {
+      var sel = window.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
+    }
+  }
+
+  // Unwrap all <span style="color:..."> and <font color="..."> inside an element
+  function removeColorSpans(el) {
+    el.querySelectorAll('span[style*="color"], font[color]').forEach(function(node) {
+      var parent = node.parentNode;
+      if (!parent) return;
+      while (node.firstChild) parent.insertBefore(node.firstChild, node);
+      parent.removeChild(node);
+    });
+    // Normalize to merge adjacent text nodes
+    try { el.normalize(); } catch(e) {}
+  }
+
   function saveCurrentEdit() {
     if (!_editingEl) return;
     var el = _editingEl, orig = _editingOrigHtml;
@@ -500,6 +551,7 @@ export default function SiteEditorPage() {
   function activateEdit(el, origHtml, cx, cy) {
     if (_editingEl && _editingEl !== el) saveCurrentEdit();
     _editingEl = el; _editingOrigHtml = origHtml;
+    _savedRange = null; // reset stale ranges on new edit session
     el.contentEditable = 'true'; el.focus();
     try {
       var r = document.caretRangeFromPoint(cx, cy);
@@ -633,7 +685,7 @@ export default function SiteEditorPage() {
       if (el.querySelector('img') || !el.textContent.trim()) return;
       makeTextEditable(el, tIdx++);
     });
-    document.querySelectorAll('p').forEach(function(el) {
+    document.querySelectorAll('p,li').forEach(function(el) {
       if (el.textContent.trim().length < 5 || el.querySelector('img')) return;
       makeTextEditable(el, tIdx++);
     });
