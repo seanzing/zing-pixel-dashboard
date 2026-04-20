@@ -108,6 +108,7 @@ export default function DashboardPage() {
   });
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="p-8">
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-2xl font-bold text-zing-dark">Sites</h2>
@@ -291,6 +292,7 @@ export default function DashboardPage() {
           }}
         />
       )}
+    </div>
     </div>
   );
 }
