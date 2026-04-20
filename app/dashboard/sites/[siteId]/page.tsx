@@ -650,6 +650,13 @@ export default function SiteEditorPage() {
     el.addEventListener('click', function(e) {
       if (e.target.closest('[data-pixel-el]')) return;
       e.stopPropagation();
+      if (el.isContentEditable) {
+        // Already in edit mode — do NOT call activateEdit (it runs
+        // caretRangeFromPoint which destroys any drag-selection).
+        // Just nudge the toolbar position in case the element grew.
+        if (toolbar) positionToolbar(el);
+        return;
+      }
       if (_imgSelected) { clearImgSelection(); window.parent.postMessage({ type:'PIXEL_DESELECT' }, '*'); }
       activateEdit(el, origHtml, e.clientX, e.clientY);
     });
