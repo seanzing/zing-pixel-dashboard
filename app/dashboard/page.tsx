@@ -167,14 +167,14 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                {site.preview_url && (
+                {(site.live_url || site.preview_url) && (
                   <a
-                    href={site.preview_url}
+                    href={site.live_url || site.preview_url || ""}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-zing-teal hover:underline break-all"
                   >
-                    {site.preview_url}
+                    {site.live_url || site.preview_url}
                   </a>
                 )}
 

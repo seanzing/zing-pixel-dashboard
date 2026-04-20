@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { id, business_name, owner_email, phone, address, preview_url } = body;
+  const { id, business_name, owner_email, phone, address, preview_url, live_url } = body;
 
   if (!id || !business_name || !owner_email) {
     return NextResponse.json(
@@ -48,7 +48,8 @@ export async function POST(request: Request) {
         phone: phone || null,
         address: address || null,
         preview_url: preview_url || null,
-        status: "preview",
+        live_url: live_url || null,
+        status: live_url ? "live" : "preview",
         updated_at: new Date().toISOString(),
       },
       { onConflict: "id" }

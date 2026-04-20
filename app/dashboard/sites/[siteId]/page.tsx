@@ -2309,9 +2309,9 @@ export default function SiteEditorPage() {
                       >
                         ↻ Refresh
                       </button>
-                      {!blobUrl && site.preview_url && (
+                      {!blobUrl && (site.live_url || site.preview_url) && (
                         <a
-                          href={site.preview_url}
+                          href={site.live_url || site.preview_url || ""}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-zing-teal hover:underline px-2 py-1"
@@ -2552,14 +2552,14 @@ export default function SiteEditorPage() {
       {/* Bottom bar */}
       <div className="border-t border-gray-200 bg-white px-5 py-2.5 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          {site.preview_url ? (
+          {(site.live_url || site.preview_url) ? (
             <a
-              href={site.preview_url}
+              href={site.live_url || site.preview_url || ""}
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-zing-teal hover:underline truncate max-w-[220px]"
             >
-              {site.preview_url}
+              {site.live_url || site.preview_url}
             </a>
           ) : (
             <span className="text-xs text-gray-400">No preview yet</span>
