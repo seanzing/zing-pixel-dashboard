@@ -298,37 +298,29 @@ export default function SiteEditorPage() {
     colorWrap.appendChild(colorPanel);
     toolbar.appendChild(colorWrap);
 
-    // Color panel logic — direct DOM approach (more reliable than execCommand foreColor)
+    // Color — direct DOM span insertion (selection guaranteed intact via mousedown)
     function applyColor(color) {
       if (!_editingEl) return;
-      restoreSelection();
       var sel = window.getSelection();
       if (sel && sel.rangeCount > 0 && !sel.isCollapsed && _editingEl.contains(sel.anchorNode)) {
-        // Wrap selected text in a color span
         var range = sel.getRangeAt(0);
         var span = document.createElement('span');
         span.style.color = color;
         try {
           range.surroundContents(span);
         } catch(e) {
-          // Selection spans partial elements — extract and rewrap
           var frag = range.extractContents();
           span.appendChild(frag);
           range.insertNode(span);
-          range.setStartAfter(span); range.collapse(true);
-          sel.removeAllRanges(); sel.addRange(range);
         }
       } else {
-        // No selection — apply color to entire element
         _editingEl.style.color = color;
       }
-      // Update indicator
       var ind = document.getElementById('pixel-color-indicator');
       if (ind) ind.style.borderBottomColor = color;
       colorPreview.style.background = color;
       colorHex.value = color;
       colorPanel.style.display = 'none';
-      _editingEl.focus();
     }
     colorBtn.addEventListener('click', function() {
       colorPanel.style.display = colorPanel.style.display === 'none' ? 'block' : 'none';
@@ -397,20 +389,20 @@ export default function SiteEditorPage() {
       if (e.target !== pxInput && e.target !== document.getElementById('pixel-color-hex')) e.preventDefault();
     });
 
+    // All formatting/action buttons use mousedown (not click) so the
+    // browser hasn't yet processed focus changes — selection is guaranteed intact.
     toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
-      b.addEventListener('click', function() {
+      b.addEventListener('mousedown', function(e) {
         if (!_editingEl) return;
-        restoreSelection();
         document.execCommand(b.getAttribute('data-cmd'));
-        _editingEl.focus();
         updateToolbarState();
       });
     });
     toolbar.querySelectorAll('[data-list]').forEach(function(b) {
-      b.addEventListener('click', function() { convertToList(b.getAttribute('data-list')); });
+      b.addEventListener('mousedown', function(e) { convertToList(b.getAttribute('data-list')); });
     });
     toolbar.querySelectorAll('[data-tag]').forEach(function(b) {
-      b.addEventListener('click', function() { convertTag(b.getAttribute('data-tag')); });
+      b.addEventListener('mousedown', function(e) { convertTag(b.getAttribute('data-tag')); });
     });
     pxInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.key === 'Tab') {
@@ -424,27 +416,25 @@ export default function SiteEditorPage() {
       if (px > 0 && _editingEl) _editingEl.style.fontSize = px + 'px';
     });
 
-    // Alignment buttons
+    // Alignment buttons — mousedown
     toolbar.querySelectorAll('[data-align]').forEach(function(b) {
-      b.addEventListener('click', function() {
+      b.addEventListener('mousedown', function(e) {
         if (!_editingEl) return;
         _editingEl.style.textAlign = b.getAttribute('data-align');
         updateToolbarState();
       });
     });
 
-    // Clear formatting
+    // Clear formatting — mousedown
     toolbar.querySelectorAll('[data-action="clear"]').forEach(function(b) {
-      b.addEventListener('click', function() {
+      b.addEventListener('mousedown', function(e) {
         if (!_editingEl) return;
-        restoreSelection();
         document.execCommand('removeFormat'); // strips bold/italic/underline from selection
         removeColorSpans(_editingEl);         // strips <span style="color:"> nodes
         _editingEl.style.fontSize = '';
         _editingEl.style.fontFamily = '';
         _editingEl.style.textAlign = '';
         _editingEl.style.color = '';
-        _editingEl.focus();
         updateToolbarState();
       });
     });
@@ -552,7 +542,7 @@ export default function SiteEditorPage() {
     if (_editingEl && _editingEl !== el) saveCurrentEdit();
     _editingEl = el; _editingOrigHtml = origHtml;
     _savedRange = null; // reset stale ranges on new edit session
-    el.contentEditable = 'true'; el.focus();
+    el.contentEditable = 'true'; el.focus({ preventScroll: true });
     try {
       var r = document.caretRangeFromPoint(cx, cy);
       if (r) { var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -578,8 +568,9 @@ export default function SiteEditorPage() {
     // Re-establish editing on new element
     if (pIdx !== null) newEl.setAttribute('data-pixel-text', pIdx);
     _editingEl = newEl; _editingOrigHtml = newHtml;
-    newEl.contentEditable = 'true'; newEl.focus();
-    positionToolbar(newEl); updateToolbarState();
+    newEl.contentEditable = 'true';
+    newEl.focus({ preventScroll: true });
+    requestAnimationFrame(function() { positionToolbar(newEl); updateToolbarState(); });
   }
 
   function convertToList(listTag) {
