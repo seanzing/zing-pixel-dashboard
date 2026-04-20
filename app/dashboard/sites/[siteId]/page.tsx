@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import FontPicker from "@/components/FontPicker";
+import PixelToolbar from "@/components/PixelToolbar";
+import type { SelectionState } from "@/components/PixelToolbar";
 
 
 interface Site {
@@ -100,6 +102,10 @@ export default function SiteEditorPage() {
   const pendingRebuildRef = useRef(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // Parent toolbar state (driven by PIXEL_SELECTION_STATE from iframe)
+  const [toolbarState, setToolbarState] = useState<SelectionState | null>(null);
+  const [iframeRect, setIframeRect] = useState<DOMRect | null>(null);
+
   // Click-to-replace image state
   const [selectedImg, setSelectedImg] = useState<{ index: number; rawSrc: string; resolvedSrc: string; kind: "img" | "bg" } | null>(null);
   const [imgReplaceFile, setImgReplaceFile] = useState<File | null>(null);
@@ -196,29 +202,6 @@ export default function SiteEditorPage() {
   [data-pixel-text]:not([contenteditable="true"]) { cursor: text !important; }
   [data-pixel-text]:not([contenteditable="true"]):hover { outline: 2px dashed #2a7c6f !important; outline-offset: 2px !important; }
   [data-pixel-text][contenteditable="true"] { outline: 2px solid #2a7c6f !important; outline-offset: 2px !important; box-shadow: 0 0 0 4px rgba(42,124,111,0.12) !important; }
-  #pixel-toolbar { position:fixed;display:none;align-items:center;gap:2px;background:#1a1d21;border-radius:9px;padding:5px 7px;box-shadow:0 6px 24px rgba(0,0,0,0.4);z-index:2147483647;user-select:none;font-family:system-ui,sans-serif; }
-  #pixel-toolbar button { background:transparent;border:none;color:#d1d5db;font-size:12px;font-weight:700;padding:4px 7px;border-radius:5px;cursor:pointer;line-height:1;min-width:24px; }
-  #pixel-toolbar button:hover { background:#374151;color:#fff; }
-  #pixel-toolbar button.px-active { background:#2a7c6f;color:#fff; }
-  #pixel-toolbar .px-sep { width:1px;height:16px;background:#374151;margin:0 3px;flex-shrink:0; }
-  #pixel-toolbar .px-label { color:#6b7280;font-size:10px;padding:0 2px 0 4px; }
-  #pixel-toolbar input[type=number] { width:44px;background:#374151;border:1px solid #4b5563;border-radius:5px;color:#e5e7eb;font-size:12px;font-weight:600;padding:3px 5px;text-align:center;outline:none; }
-  #pixel-toolbar input[type=number]:focus { border-color:#2a7c6f;background:#1f2937; }
-  #pixel-toolbar input[type=number]::-webkit-inner-spin-button,#pixel-toolbar input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; }
-  .px-color-wrap { position:relative;display:inline-flex; }
-  #pixel-color-panel { position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#fff;border-radius:10px;padding:10px;box-shadow:0 8px 28px rgba(0,0,0,0.22);z-index:1;width:186px; }
-  .px-swatches { display:grid;grid-template-columns:repeat(8,18px);gap:3px;margin-bottom:8px; }
-  .px-swatch { width:18px;height:18px;border-radius:4px;cursor:pointer;border:2px solid transparent;box-sizing:border-box;transition:transform 0.1s,border-color 0.1s; }
-  .px-swatch:hover { transform:scale(1.2);border-color:#2a7c6f; }
-  .px-swatch[data-selected] { border-color:#2a7c6f; }
-  .px-color-row { display:flex;align-items:center;gap:6px; }
-  #pixel-color-preview { width:22px;height:22px;border-radius:5px;border:1.5px solid #e5e7eb;flex-shrink:0; }
-  #pixel-color-hex { flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:5px;color:#374151;font-size:11px;font-family:monospace;padding:3px 6px;outline:none; }
-  #pixel-color-hex:focus { border-color:#2a7c6f; }
-  #pixel-color-apply { background:#2a7c6f;color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:700;padding:3px 7px;cursor:pointer; }
-  #pixel-color-apply:hover { background:#1e3530; }
-  #pixel-color-none { font-size:10px;color:#6b7280;cursor:pointer;text-decoration:underline;display:block;text-align:center;margin-top:6px; }
-  #pixel-color-none:hover { color:#374151; }
 </style>
 <script>
 (function() {
@@ -226,276 +209,35 @@ export default function SiteEditorPage() {
   var _imgSelected = null;
   var _editingEl = null;
   var _editingOrigHtml = '';
-  var _savedRange = null; // selection preserved across toolbar clicks
-  var toolbar, pxInput;
 
-  // ─── Toolbar Build ────────────────────────────────────────────────────────
-  function initToolbar() {
-    toolbar = document.createElement('div');
-    toolbar.id = 'pixel-toolbar';
-
-    function btn(html, title, attrs) {
-      var b = document.createElement('button');
-      b.innerHTML = html; b.title = title || '';
-      if (attrs) Object.keys(attrs).forEach(function(k) { b.setAttribute(k, attrs[k]); });
-      toolbar.appendChild(b); return b;
-    }
-    function sep() { var s = document.createElement('div'); s.className = 'px-sep'; toolbar.appendChild(s); }
-    function label(t) { var l = document.createElement('span'); l.className = 'px-label'; l.textContent = t; toolbar.appendChild(l); }
-
-    btn('<b>B</b>', 'Bold', {'data-cmd':'bold'});
-    btn('<i style="font-style:italic">I</i>', 'Italic', {'data-cmd':'italic'});
-    btn('<u style="text-decoration:underline">U</u>', 'Underline', {'data-cmd':'underline'});
-    btn('<s>S</s>', 'Strikethrough', {'data-cmd':'strikeThrough'});
-    sep();
-
-    // Text color button + panel
-    var colorWrap = document.createElement('div');
-    colorWrap.className = 'px-color-wrap';
-    var colorBtn = document.createElement('button');
-    colorBtn.id = 'pixel-color-btn';
-    colorBtn.title = 'Text color';
-    colorBtn.innerHTML = '<span id="pixel-color-indicator" style="font-weight:700;font-size:13px;border-bottom:3px solid #ffffff;padding-bottom:0px;line-height:1.2;display:inline-block">A</span>';
-    colorWrap.appendChild(colorBtn);
-
-    var colorPanel = document.createElement('div');
-    colorPanel.id = 'pixel-color-panel';
-    colorPanel.style.display = 'none';
-    var PALETTE = [
-      '#000000','#1f2937','#374151','#6b7280','#9ca3af','#e5e7eb','#f9fafb','#ffffff',
-      '#7f1d1d','#b91c1c','#ef4444','#f97316','#f59e0b','#fbbf24','#fde68a','#fef9c3',
-      '#14532d','#16a34a','#4ade80','#0d9488','#22d3ee','#3b82f6','#6366f1','#a855f7',
-      '#2a7c6f','#1e3530','#1d4ed8','#7c3aed','#be185d','#ec4899','#9f1239','#4c1d95',
-    ];
-    var swatchGrid = document.createElement('div');
-    swatchGrid.className = 'px-swatches';
-    PALETTE.forEach(function(color) {
-      var sw = document.createElement('div');
-      sw.className = 'px-swatch';
-      sw.style.background = color;
-      sw.title = color;
-      if (color === '#ffffff') sw.style.border = '2px solid #e5e7eb';
-      sw.addEventListener('mousedown', function(e) { e.preventDefault(); applyColor(color); });
-      swatchGrid.appendChild(sw);
-    });
-    colorPanel.appendChild(swatchGrid);
-    var colorRow = document.createElement('div');
-    colorRow.className = 'px-color-row';
-    var colorPreview = document.createElement('div');
-    colorPreview.id = 'pixel-color-preview';
-    colorPreview.style.background = '#000000';
-    var colorHex = document.createElement('input');
-    colorHex.type = 'text'; colorHex.id = 'pixel-color-hex';
-    colorHex.placeholder = '#000000'; colorHex.maxLength = 7;
-    var colorApply = document.createElement('button');
-    colorApply.id = 'pixel-color-apply'; colorApply.textContent = '↵';
-    colorApply.title = 'Apply color';
-    colorRow.appendChild(colorPreview); colorRow.appendChild(colorHex); colorRow.appendChild(colorApply);
-    colorPanel.appendChild(colorRow);
-    var colorNone = document.createElement('span');
-    colorNone.id = 'pixel-color-none'; colorNone.textContent = 'Remove color';
-    colorPanel.appendChild(colorNone);
-    colorWrap.appendChild(colorPanel);
-    toolbar.appendChild(colorWrap);
-
-    // Color — restore focus+selection first, then execCommand
-    function applyColor(color) {
-      if (!_editingEl) return;
-      restoreSelectionAndFocus();
-      var sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-        // Apply to selection
-        document.execCommand('styleWithCSS', false, true);
-        document.execCommand('foreColor', false, color);
-      } else {
-        // No selection — apply to the whole element
-        _editingEl.style.color = color;
-      }
-      var ind = document.getElementById('pixel-color-indicator');
-      if (ind) ind.style.borderBottomColor = color;
-      colorPreview.style.background = color;
-      colorHex.value = color;
-      colorPanel.style.display = 'none';
-    }
-    colorBtn.addEventListener('mousedown', function(e) {
-      e.preventDefault(); // keep selection intact when toggling the panel
-      colorPanel.style.display = colorPanel.style.display === 'none' ? 'block' : 'none';
-    });
-    colorHex.addEventListener('input', function() {
-      var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value;
-      if (/^#[0-9a-fA-F]{6}$/.test(val)) colorPreview.style.background = val;
-    });
-    colorHex.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value; if (/^#[0-9a-fA-F]{6}$/.test(val)) applyColor(val); }
-    });
-    colorApply.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value;
-      if (/^#[0-9a-fA-F]{6}$/.test(val)) applyColor(val);
-    });
-    colorNone.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      if (!_editingEl) return;
-      removeColorSpans(_editingEl);
-      _editingEl.style.color = '';
-      var ind = document.getElementById('pixel-color-indicator');
-      if (ind) ind.style.borderBottomColor = '#ffffff';
-      colorPanel.style.display = 'none';
-      _editingEl.focus();
-    });
-    sep();
-
-    // Alignment
-    var alignSvgs = {
-      left: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="0" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="0" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
-      center: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="2" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="1" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
-      right: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="4" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="2" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
-    };
-    btn(alignSvgs.left, 'Align left', {'data-align':'left'});
-    btn(alignSvgs.center, 'Align center', {'data-align':'center'});
-    btn(alignSvgs.right, 'Align right', {'data-align':'right'});
-    sep();
-
-    btn('&#8855;', 'Clear formatting', {'data-action':'clear'});
-    sep();
-
-    btn('&#8226;&#8213;', 'Bullet list', {'data-list':'ul'});
-    btn('1&#8213;', 'Numbered list', {'data-list':'ol'});
-    sep();
-    ['h1','h2','h3','h4','p'].forEach(function(tag) {
-      btn(tag.toUpperCase(), 'Convert to &lt;' + tag + '&gt;', {'data-tag': tag});
-    });
-    sep();
-    label('px');
-    pxInput = document.createElement('input');
-    pxInput.type = 'number'; pxInput.id = 'pixel-px-input';
-    pxInput.placeholder = '–'; pxInput.min = '8'; pxInput.max = '200';
-    toolbar.appendChild(pxInput);
-    sep();
-    btn('Aa', 'Font family', {'data-action': 'font'});
-
-    document.body.appendChild(toolbar);
-
-    // Toolbar mousedown — unconditionally prevent blur/focus-change from any toolbar element.
-    // This is the CATCH-ALL backup, but each individual handler also calls e.preventDefault()
-    // at target phase (which is more reliable — some browsers finalise focus before bubble fires).
-    toolbar.addEventListener('mousedown', function(e) {
-      var sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && _editingEl && _editingEl.contains(sel.anchorNode)) {
-        _savedRange = sel.getRangeAt(0).cloneRange();
-      }
-      if (e.target !== pxInput && e.target !== document.getElementById('pixel-color-hex')) e.preventDefault();
-    });
-
-    // e.preventDefault() on EACH handler (target phase) — guarantees selection is intact
-    // regardless of browser behaviour during the mousedown dispatch cycle.
-    toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        if (!_editingEl) return;
-        restoreSelectionAndFocus();
-        document.execCommand(b.getAttribute('data-cmd'));
-        updateToolbarState();
-      });
-    });
-    toolbar.querySelectorAll('[data-list]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) { e.preventDefault(); convertToList(b.getAttribute('data-list')); });
-    });
-    toolbar.querySelectorAll('[data-tag]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) { e.preventDefault(); convertTag(b.getAttribute('data-tag')); });
-    });
-    pxInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        var px = parseInt(pxInput.value);
-        if (px > 0 && _editingEl) { _editingEl.style.fontSize = px + 'px'; _editingEl.focus(); }
-      }
-    });
-    pxInput.addEventListener('change', function() {
-      var px = parseInt(pxInput.value);
-      if (px > 0 && _editingEl) _editingEl.style.fontSize = px + 'px';
-    });
-
-    // Alignment buttons
-    toolbar.querySelectorAll('[data-align]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        if (!_editingEl) return;
-        _editingEl.style.textAlign = b.getAttribute('data-align');
-        updateToolbarState();
-      });
-    });
-
-    // Clear formatting
-    toolbar.querySelectorAll('[data-action="clear"]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        if (!_editingEl) return;
-        restoreSelectionAndFocus();
-        document.execCommand('removeFormat');
-        removeColorSpans(_editingEl);
-        _editingEl.style.fontSize = '';
-        _editingEl.style.fontFamily = '';
-        _editingEl.style.textAlign = '';
-        _editingEl.style.color = '';
-        updateToolbarState();
-      });
-    });
-
-    // Aa button — mousedown (not click) so selection isn't lost before postMessage fires
-    toolbar.querySelectorAll('[data-action="font"]').forEach(function(b) {
-      b.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        window.parent.postMessage({ type: 'PIXEL_OPEN_FONT_PICKER' }, '*');
-      });
-    });
-  }
-
-  // ─── Toolbar State ────────────────────────────────────────────────────────
-  function updateToolbarState() {
-    if (!_editingEl || !toolbar) return;
-    var tag = _editingEl.tagName.toLowerCase();
-    // Tag buttons
-    toolbar.querySelectorAll('[data-tag]').forEach(function(b) {
-      b.classList.toggle('px-active', b.getAttribute('data-tag') === tag);
-    });
-    // Cmd state (bold, italic, underline, strikethrough)
-    toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
-      try { b.classList.toggle('px-active', document.queryCommandState(b.getAttribute('data-cmd'))); } catch(e) {}
-    });
-    // Alignment — normalise 'start' → 'left', 'end' → 'right'
-    var rawAlign = _editingEl.style.textAlign || window.getComputedStyle(_editingEl).textAlign || 'left';
-    var align = rawAlign === 'start' ? 'left' : rawAlign === 'end' ? 'right' : rawAlign;
-    toolbar.querySelectorAll('[data-align]').forEach(function(b) {
-      b.classList.toggle('px-active', b.getAttribute('data-align') === align);
-    });
-    // Font size
-    var fs = _editingEl.style.fontSize || window.getComputedStyle(_editingEl).fontSize;
-    if (fs && pxInput) pxInput.value = parseInt(fs) || '';
-    // Color indicator
-    var color = window.getComputedStyle(_editingEl).color;
-    if (color) {
-      try {
-        var m = color.match(/\d+/g);
-        if (m && m.length >= 3) {
-          var hex = '#' + [m[0],m[1],m[2]].map(function(n) { return ('0'+parseInt(n).toString(16)).slice(-2); }).join('');
-          var ind = document.getElementById('pixel-color-indicator');
-          if (ind) ind.style.borderBottomColor = hex;
-          var prev = document.getElementById('pixel-color-preview');
-          if (prev) prev.style.background = hex;
-        }
-      } catch(e) {}
-    }
-  }
-
-  function positionToolbar(el) {
-    toolbar.style.display = 'flex';
-    var rect = el.getBoundingClientRect();
-    var h = toolbar.offsetHeight || 44;
-    var top = rect.top - h - 10;
-    if (top < 4) top = rect.bottom + 10;
-    var left = Math.max(8, Math.min(rect.left, window.innerWidth - 400));
-    toolbar.style.top = top + 'px'; toolbar.style.left = left + 'px';
+  // ─── Selection State → Parent ─────────────────────────────────────────────
+  function sendSelectionState() {
+    if (!_editingEl) return;
+    var sel = window.getSelection();
+    var hasSelection = sel && sel.rangeCount > 0 && !sel.isCollapsed;
+    var rect = _editingEl.getBoundingClientRect();
+    window.parent.postMessage({
+      type: 'PIXEL_SELECTION_STATE',
+      isEditing: true,
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+      strikethrough: document.queryCommandState('strikeThrough'),
+      align: (function() {
+        var a = _editingEl.style.textAlign || window.getComputedStyle(_editingEl).textAlign || 'left';
+        return a === 'start' ? 'left' : a === 'end' ? 'right' : a;
+      })(),
+      fontSize: parseInt(_editingEl.style.fontSize || window.getComputedStyle(_editingEl).fontSize) || 16,
+      color: (function() {
+        var c = window.getComputedStyle(_editingEl).color;
+        var m = c && c.match(/\\d+/g);
+        if (m && m.length >= 3) return '#' + [m[0],m[1],m[2]].map(function(n){return ('0'+parseInt(n).toString(16)).slice(-2);}).join('');
+        return '#000000';
+      })(),
+      hasSelection: !!hasSelection,
+      elementTag: _editingEl.tagName.toLowerCase(),
+      elementRect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right }
+    }, '*');
   }
 
   // ─── Edit Session ─────────────────────────────────────────────────────────
@@ -505,30 +247,8 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
-  // Restore focus + saved selection into _editingEl.
-  // Called before every execCommand so formatting is guaranteed to apply
-  // to the correct text even if focus briefly left the editing element.
-  function restoreSelectionAndFocus() {
-    if (!_editingEl) return;
-    _editingEl.focus({ preventScroll: true });
-    if (_savedRange) {
-      try {
-        var sel = window.getSelection();
-        if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
       } catch(e) {}
     }
-  }
-
-  // Unwrap all <span style="color:..."> and <font color="..."> inside an element
-  function removeColorSpans(el) {
-    el.querySelectorAll('span[style*="color"], font[color]').forEach(function(node) {
-      var parent = node.parentNode;
-      if (!parent) return;
-      while (node.firstChild) parent.insertBefore(node.firstChild, node);
-      parent.removeChild(node);
-    });
-    // Normalize to merge adjacent text nodes
-    try { el.normalize(); } catch(e) {}
   }
 
   function saveCurrentEdit() {
@@ -540,8 +260,7 @@ export default function SiteEditorPage() {
       window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:orig, newHtml:newHtml, needsRebuild:false }, '*');
       _editingOrigHtml = newHtml;
     }
-    toolbar.style.display = 'none';
-    var cp = document.getElementById('pixel-color-panel'); if (cp) cp.style.display = 'none';
+    window.parent.postMessage({ type:'PIXEL_SELECTION_STATE', isEditing:false }, '*');
     window.parent.postMessage({ type:'PIXEL_TEXT_END' }, '*');
     _editingEl = null; _editingOrigHtml = '';
   }
@@ -549,13 +268,12 @@ export default function SiteEditorPage() {
   function activateEdit(el, origHtml, cx, cy) {
     if (_editingEl && _editingEl !== el) saveCurrentEdit();
     _editingEl = el; _editingOrigHtml = origHtml;
-    _savedRange = null; // reset stale ranges on new edit session
     el.contentEditable = 'true'; el.focus({ preventScroll: true });
     try {
       var r = document.caretRangeFromPoint(cx, cy);
       if (r) { var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }
     } catch(err) {}
-    positionToolbar(el); updateToolbarState();
+    sendSelectionState();
     window.parent.postMessage({ type:'PIXEL_TEXT_START' }, '*');
   }
 
@@ -578,7 +296,7 @@ export default function SiteEditorPage() {
     _editingEl = newEl; _editingOrigHtml = newHtml;
     newEl.contentEditable = 'true';
     newEl.focus({ preventScroll: true });
-    requestAnimationFrame(function() { positionToolbar(newEl); updateToolbarState(); });
+    requestAnimationFrame(function() { sendSelectionState(); });
   }
 
   function convertToList(listTag) {
@@ -595,26 +313,14 @@ export default function SiteEditorPage() {
     if (newHtml !== orig) {
       window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:orig, newHtml:newHtml, needsRebuild:true }, '*');
     }
-    toolbar.style.display = 'none';
+    window.parent.postMessage({ type:'PIXEL_SELECTION_STATE', isEditing:false }, '*');
     window.parent.postMessage({ type:'PIXEL_TEXT_END' }, '*');
   }
 
   // ─── Global Listeners ─────────────────────────────────────────────────────
   document.addEventListener('focusout', function(e) {
     if (!_editingEl || e.target !== _editingEl) return;
-    var rel = e.relatedTarget;
-    if (rel && toolbar && toolbar.contains(rel)) return;
-    // If focus went to the color hex input, don't save yet
-    if (rel && rel.id === 'pixel-color-hex') return;
     saveCurrentEdit();
-  });
-
-  // Close color panel on click outside toolbar
-  document.addEventListener('click', function(e) {
-    var cp = document.getElementById('pixel-color-panel');
-    if (cp && cp.style.display !== 'none' && !toolbar.contains(e.target)) {
-      cp.style.display = 'none';
-    }
   });
 
   document.addEventListener('keydown', function(e) {
@@ -628,13 +334,7 @@ export default function SiteEditorPage() {
 
   document.addEventListener('selectionchange', function() {
     if (!_editingEl) return;
-    // Continuously save the selection so we can restore it before any command fires,
-    // regardless of whether e.preventDefault() successfully prevented focus loss.
-    var sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && _editingEl.contains(sel.anchorNode)) {
-      _savedRange = sel.getRangeAt(0).cloneRange();
-    }
-    updateToolbarState();
+    sendSelectionState();
   });
 
   // ─── Image Clickable ──────────────────────────────────────────────────────
@@ -678,7 +378,6 @@ export default function SiteEditorPage() {
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   function init() {
-    initToolbar();
     // Images
     document.querySelectorAll('img').forEach(function(img, i) {
       var raw = img.getAttribute('src') || '';
@@ -704,35 +403,54 @@ export default function SiteEditorPage() {
     // Dismiss on blank area click
     document.addEventListener('click', function(e) {
       if (!_imgSelected) return;
-      if (!e.target.closest('[data-pixel-el]') && !e.target.closest('[data-pixel-text]') && (!toolbar || !toolbar.contains(e.target))) {
+      if (!e.target.closest('[data-pixel-el]') && !e.target.closest('[data-pixel-text]')) {
         clearImgSelection();
         window.parent.postMessage({ type:'PIXEL_DESELECT' }, '*');
       }
     });
   }
 
-  // Handle font application from parent
+  // Handle commands from parent (toolbar is in parent document)
   window.addEventListener('message', function(e) {
-    if (!e.data || e.data.type !== 'PIXEL_APPLY_FONT') return;
-    var family = e.data.fontFamily;
-    var href = e.data.linkHref;
-    if (!family) return;
-    // Inject link into head if not already present
-    if (href && !document.querySelector('link[data-pixel-font="' + family + '"]')) {
-      var link = document.createElement('link');
-      link.rel = 'stylesheet'; link.href = href;
-      link.setAttribute('data-pixel-font', family);
-      document.head.appendChild(link);
-    }
-    if (_editingEl) {
-      _editingEl.style.fontFamily = "'" + family + "', " + (family.match(/[Mm]ono|[Cc]ode|[Cc]ourier|[Ss]pace [Mm]ono|[Ff]ira [Cc]ode/) ? 'monospace' : 'sans-serif');
-      // Report back: the element change + the link tag to persist
-      window.parent.postMessage({
-        type: 'PIXEL_FONT_LINK',
-        linkHref: href,
-        fontFamily: family,
-      }, '*');
-      updateToolbarState();
+    if (!_editingEl) return;
+    var d = e.data;
+    if (!d || !d.type) return;
+    if (d.type === 'PIXEL_CMD') {
+      document.execCommand('styleWithCSS', false, true);
+      document.execCommand(d.cmd, false, d.value || null);
+      sendSelectionState();
+    } else if (d.type === 'PIXEL_SET_ALIGN') {
+      _editingEl.style.textAlign = d.align;
+      sendSelectionState();
+    } else if (d.type === 'PIXEL_SET_FONTSIZE') {
+      _editingEl.style.fontSize = d.size + 'px';
+      sendSelectionState();
+    } else if (d.type === 'PIXEL_SET_FONTFAMILY') {
+      _editingEl.style.fontFamily = d.family;
+      var existingLink = document.querySelector('link[data-pixel-font]');
+      if (existingLink) existingLink.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(d.family) + ':wght@300;400;500;600;700&display=swap';
+      else {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet'; link.setAttribute('data-pixel-font', '1');
+        link.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(d.family) + ':wght@300;400;500;600;700&display=swap';
+        document.head.appendChild(link);
+      }
+      sendSelectionState();
+    } else if (d.type === 'PIXEL_CLEAR_FORMAT') {
+      document.execCommand('removeFormat');
+      _editingEl.querySelectorAll('span[style*="color"],font[color]').forEach(function(n) {
+        var p = n.parentNode; if (!p) return;
+        while (n.firstChild) p.insertBefore(n.firstChild, n);
+        p.removeChild(n);
+      });
+      try { _editingEl.normalize(); } catch(e2) {}
+      _editingEl.style.fontSize = ''; _editingEl.style.fontFamily = '';
+      _editingEl.style.textAlign = ''; _editingEl.style.color = '';
+      sendSelectionState();
+    } else if (d.type === 'PIXEL_CONVERT_TAG') {
+      convertTag(d.tag);
+    } else if (d.type === 'PIXEL_CONVERT_LIST') {
+      convertToList(d.listTag);
     }
   });
 
@@ -1225,9 +943,23 @@ export default function SiteEditorPage() {
     setCurrentFont(family);
     // Send font down to iframe
     iframeRef.current?.contentWindow?.postMessage(
-      { type: "PIXEL_APPLY_FONT", fontFamily: family, linkHref },
+      { type: "PIXEL_SET_FONTFAMILY", family },
       "*"
     );
+    // Also persist the Google Fonts link in localHtml
+    if (linkHref) {
+      setLocalPages(prev => {
+        const current = prev[currentPage];
+        if (!current) return prev;
+        if (current.includes(linkHref)) return prev;
+        const stripped = current.replace(/<link[^>]+data-pixel-font[^>]+>/g, "");
+        const tag = `<link rel="stylesheet" href="${linkHref}" data-pixel-font="true">`;
+        const updated = stripped.includes("</head>")
+          ? stripped.replace("</head>", `${tag}\n</head>`)
+          : tag + stripped;
+        return { ...prev, [currentPage]: updated };
+      });
+    }
   }
 
   // Rebuild blob when structural text changes (tag/list conversion) are pending
@@ -1415,25 +1147,15 @@ export default function SiteEditorPage() {
       } else if (e.data?.type === "PIXEL_TEXT_END") {
         setTextEditing(false);
         setShowFontPicker(false);
-      } else if (e.data?.type === "PIXEL_OPEN_FONT_PICKER") {
-        setShowFontPicker(prev => !prev); // toggle
-      } else if (e.data?.type === "PIXEL_FONT_LINK") {
-        // Inject the Google Fonts <link> into <head> of localHtml so it persists on deploy
-        const { linkHref } = e.data as { linkHref: string };
-        if (!linkHref) return;
-        setLocalPages(prev => {
-          const current = prev[currentPage];
-          if (!current) return prev;
-          // Skip if already present
-          if (current.includes(linkHref)) return prev;
-          // Remove any previous pixel font link for the same family
-          const stripped = current.replace(/<link[^>]+data-pixel-font[^>]+>/g, "");
-          const tag = `<link rel="stylesheet" href="${linkHref}" data-pixel-font="true">`;
-          const updated = stripped.includes("</head>")
-            ? stripped.replace("</head>", `${tag}\n</head>`)
-            : tag + stripped;
-          return { ...prev, [currentPage]: updated };
-        });
+      } else if (e.data?.type === "PIXEL_SELECTION_STATE") {
+        if (e.data.isEditing) {
+          setToolbarState(e.data as SelectionState);
+          if (iframeRef.current) {
+            setIframeRect(iframeRef.current.getBoundingClientRect());
+          }
+        } else {
+          setToolbarState(null);
+        }
       } else if (e.data?.type === "PIXEL_TEXT_CHANGE") {
         const { originalHtml, newHtml, needsRebuild } = e.data as { originalHtml: string; newHtml: string; needsRebuild?: boolean };
         setLocalPages(prev => {
@@ -1600,6 +1322,18 @@ export default function SiteEditorPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Parent-document toolbar — clicking here never steals iframe selection */}
+      {rightTab === "preview" && (
+        <PixelToolbar
+          state={toolbarState}
+          iframeRef={iframeRef}
+          iframeRect={iframeRect}
+          onFontPickerOpen={() => setShowFontPicker(true)}
+          onFontSelect={(family) => {
+            iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_SET_FONTFAMILY", family }, "*");
+          }}
+        />
+      )}
       {/* Main content: left sidebar + right panel */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Site Details / SEO / Images */}
