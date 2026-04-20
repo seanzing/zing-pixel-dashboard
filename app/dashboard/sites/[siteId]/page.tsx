@@ -298,24 +298,11 @@ export default function SiteEditorPage() {
     colorWrap.appendChild(colorPanel);
     toolbar.appendChild(colorWrap);
 
-    // Color — direct DOM span insertion (selection guaranteed intact via mousedown)
+    // Color — same execCommand pattern as bold/italic (selection intact via mousedown)
     function applyColor(color) {
       if (!_editingEl) return;
-      var sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && !sel.isCollapsed && _editingEl.contains(sel.anchorNode)) {
-        var range = sel.getRangeAt(0);
-        var span = document.createElement('span');
-        span.style.color = color;
-        try {
-          range.surroundContents(span);
-        } catch(e) {
-          var frag = range.extractContents();
-          span.appendChild(frag);
-          range.insertNode(span);
-        }
-      } else {
-        _editingEl.style.color = color;
-      }
+      document.execCommand('styleWithCSS', false, true);
+      document.execCommand('foreColor', false, color);
       var ind = document.getElementById('pixel-color-indicator');
       if (ind) ind.style.borderBottomColor = color;
       colorPreview.style.background = color;
@@ -653,8 +640,7 @@ export default function SiteEditorPage() {
       if (el.isContentEditable) {
         // Already in edit mode — do NOT call activateEdit (it runs
         // caretRangeFromPoint which destroys any drag-selection).
-        // Just nudge the toolbar position in case the element grew.
-        if (toolbar) positionToolbar(el);
+        // Toolbar stays where it is; no repositioning on every click.
         return;
       }
       if (_imgSelected) { clearImgSelection(); window.parent.postMessage({ type:'PIXEL_DESELECT' }, '*'); }
