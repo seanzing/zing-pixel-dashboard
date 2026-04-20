@@ -10,9 +10,12 @@ interface Site {
   preview_url: string | null;
   live_url: string | null;
   updated_at: string;
+  funnel: string | null;
+  surge_session_id: string | null;
 }
 
 type StatusFilter = "all" | "preview" | "live" | "archived";
+type SourceFilter = "all" | "surge" | "frame";
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -21,11 +24,18 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
+const SOURCE_TABS: { key: SourceFilter; label: string; icon: string }[] = [
+  { key: "all", label: "All Sites", icon: "🌐" },
+  { key: "surge", label: "Surge", icon: "⚡" },
+  { key: "frame", label: "Frame", icon: "🖼️" },
+];
+
 export default function DashboardPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [search, setSearch] = useState("");
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const router = useRouter();
@@ -65,14 +75,28 @@ export default function DashboardPage() {
     await fetchSites();
   }
 
+  const isSurge = (s: Site) => !!(s.funnel || s.surge_session_id);
+
+  const sourceFilteredSites = sourceFilter === "all"
+    ? sites
+    : sourceFilter === "surge"
+    ? sites.filter(isSurge)
+    : sites.filter((s) => !isSurge(s));
+
   const counts = {
-    all: sites.filter((s) => s.status !== "archived").length,
-    preview: sites.filter((s) => s.status === "preview").length,
-    live: sites.filter((s) => s.status === "live").length,
-    archived: sites.filter((s) => s.status === "archived").length,
+    all: sourceFilteredSites.filter((s) => s.status !== "archived").length,
+    preview: sourceFilteredSites.filter((s) => s.status === "preview").length,
+    live: sourceFilteredSites.filter((s) => s.status === "live").length,
+    archived: sourceFilteredSites.filter((s) => s.status === "archived").length,
   };
 
-  const visibleSites = sites.filter((s) => {
+  const sourceCounts = {
+    all: sites.length,
+    surge: sites.filter(isSurge).length,
+    frame: sites.filter((s) => !isSurge(s)).length,
+  };
+
+  const visibleSites = sourceFilteredSites.filter((s) => {
     const matchesStatus =
       statusFilter === "all" ? s.status !== "archived" : s.status === statusFilter;
     const q = search.toLowerCase();
@@ -97,6 +121,29 @@ export default function DashboardPage() {
 
       {/* Tabs + Search */}
       <div className="flex items-center justify-between mb-5 gap-4">
+        {/* Source filter (Surge / Frame) */}
+        <div className="flex gap-2 mb-4">
+          {SOURCE_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => { setSourceFilter(tab.key); setStatusFilter("all"); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                sourceFilter === tab.key
+                  ? "bg-zing-teal text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              <span>{tab.icon}</span>
+              {tab.label}
+              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                sourceFilter === tab.key ? "bg-white/20 text-white" : "bg-white text-gray-500"
+              }`}>
+                {sourceCounts[tab.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <div className="flex gap-1 border-b border-gray-200 flex-1">
           {STATUS_TABS.map((tab) => (
             <button
@@ -150,21 +197,22 @@ export default function DashboardPage() {
                     </h3>
                     <p className="text-xs text-gray-400">{site.id}</p>
                   </div>
-                  <span
-                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      isArchived
-                        ? "bg-gray-100 text-gray-500"
-                        : site.status === "live"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                  >
-                    {isArchived
-                      ? "Archived"
-                      : site.status === "live"
-                      ? "Live"
-                      : "Preview"}
-                  </span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span
+                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        isArchived
+                          ? "bg-gray-100 text-gray-500"
+                          : site.status === "live"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {isArchived ? "Archived" : site.status === "live" ? "Live" : "Preview"}
+                    </span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400">
+                      {isSurge(site) ? "⚡ Surge" : "🖼️ Frame"}
+                    </span>
+                  </div>
                 </div>
 
                 {(site.live_url || site.preview_url) && (
