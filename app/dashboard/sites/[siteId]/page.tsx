@@ -298,11 +298,19 @@ export default function SiteEditorPage() {
     colorWrap.appendChild(colorPanel);
     toolbar.appendChild(colorWrap);
 
-    // Color — same execCommand pattern as bold/italic (selection intact via mousedown)
+    // Color — restore focus+selection first, then execCommand
     function applyColor(color) {
       if (!_editingEl) return;
-      document.execCommand('styleWithCSS', false, true);
-      document.execCommand('foreColor', false, color);
+      restoreSelectionAndFocus();
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+        // Apply to selection
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('foreColor', false, color);
+      } else {
+        // No selection — apply to the whole element
+        _editingEl.style.color = color;
+      }
       var ind = document.getElementById('pixel-color-indicator');
       if (ind) ind.style.borderBottomColor = color;
       colorPreview.style.background = color;
@@ -385,6 +393,7 @@ export default function SiteEditorPage() {
       b.addEventListener('mousedown', function(e) {
         e.preventDefault();
         if (!_editingEl) return;
+        restoreSelectionAndFocus();
         document.execCommand(b.getAttribute('data-cmd'));
         updateToolbarState();
       });
@@ -422,6 +431,7 @@ export default function SiteEditorPage() {
       b.addEventListener('mousedown', function(e) {
         e.preventDefault();
         if (!_editingEl) return;
+        restoreSelectionAndFocus();
         document.execCommand('removeFormat');
         removeColorSpans(_editingEl);
         _editingEl.style.fontSize = '';
@@ -495,13 +505,17 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
-  // Restore the saved selection into _editingEl
-  function restoreSelection() {
+  // Restore focus + saved selection into _editingEl.
+  // Called before every execCommand so formatting is guaranteed to apply
+  // to the correct text even if focus briefly left the editing element.
+  function restoreSelectionAndFocus() {
     if (!_editingEl) return;
-    _editingEl.focus();
+    _editingEl.focus({ preventScroll: true });
     if (_savedRange) {
-      var sel = window.getSelection();
-      if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
+      try {
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
+      } catch(e) {}
     }
   }
 
@@ -613,7 +627,14 @@ export default function SiteEditorPage() {
   });
 
   document.addEventListener('selectionchange', function() {
-    if (_editingEl) updateToolbarState();
+    if (!_editingEl) return;
+    // Continuously save the selection so we can restore it before any command fires,
+    // regardless of whether e.preventDefault() successfully prevented focus loss.
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && _editingEl.contains(sel.anchorNode)) {
+      _savedRange = sel.getRangeAt(0).cloneRange();
+    }
+    updateToolbarState();
   });
 
   // ─── Image Clickable ──────────────────────────────────────────────────────
