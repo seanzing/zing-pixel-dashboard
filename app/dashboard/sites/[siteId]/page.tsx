@@ -205,6 +205,20 @@ export default function SiteEditorPage() {
   #pixel-toolbar input[type=number] { width:44px;background:#374151;border:1px solid #4b5563;border-radius:5px;color:#e5e7eb;font-size:12px;font-weight:600;padding:3px 5px;text-align:center;outline:none; }
   #pixel-toolbar input[type=number]:focus { border-color:#2a7c6f;background:#1f2937; }
   #pixel-toolbar input[type=number]::-webkit-inner-spin-button,#pixel-toolbar input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; }
+  .px-color-wrap { position:relative;display:inline-flex; }
+  #pixel-color-panel { position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#fff;border-radius:10px;padding:10px;box-shadow:0 8px 28px rgba(0,0,0,0.22);z-index:1;width:186px; }
+  .px-swatches { display:grid;grid-template-columns:repeat(8,18px);gap:3px;margin-bottom:8px; }
+  .px-swatch { width:18px;height:18px;border-radius:4px;cursor:pointer;border:2px solid transparent;box-sizing:border-box;transition:transform 0.1s,border-color 0.1s; }
+  .px-swatch:hover { transform:scale(1.2);border-color:#2a7c6f; }
+  .px-swatch[data-selected] { border-color:#2a7c6f; }
+  .px-color-row { display:flex;align-items:center;gap:6px; }
+  #pixel-color-preview { width:22px;height:22px;border-radius:5px;border:1.5px solid #e5e7eb;flex-shrink:0; }
+  #pixel-color-hex { flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:5px;color:#374151;font-size:11px;font-family:monospace;padding:3px 6px;outline:none; }
+  #pixel-color-hex:focus { border-color:#2a7c6f; }
+  #pixel-color-apply { background:#2a7c6f;color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:700;padding:3px 7px;cursor:pointer; }
+  #pixel-color-apply:hover { background:#1e3530; }
+  #pixel-color-none { font-size:10px;color:#6b7280;cursor:pointer;text-decoration:underline;display:block;text-align:center;margin-top:6px; }
+  #pixel-color-none:hover { color:#374151; }
 </style>
 <script>
 (function() {
@@ -230,7 +244,112 @@ export default function SiteEditorPage() {
 
     btn('<b>B</b>', 'Bold', {'data-cmd':'bold'});
     btn('<i style="font-style:italic">I</i>', 'Italic', {'data-cmd':'italic'});
+    btn('<u style="text-decoration:underline">U</u>', 'Underline', {'data-cmd':'underline'});
+    btn('<s>S</s>', 'Strikethrough', {'data-cmd':'strikeThrough'});
     sep();
+
+    // Text color button + panel
+    var colorWrap = document.createElement('div');
+    colorWrap.className = 'px-color-wrap';
+    var colorBtn = document.createElement('button');
+    colorBtn.id = 'pixel-color-btn';
+    colorBtn.title = 'Text color';
+    colorBtn.innerHTML = '<span id="pixel-color-indicator" style="font-weight:700;font-size:13px;border-bottom:3px solid #ffffff;padding-bottom:0px;line-height:1.2;display:inline-block">A</span>';
+    colorWrap.appendChild(colorBtn);
+
+    var colorPanel = document.createElement('div');
+    colorPanel.id = 'pixel-color-panel';
+    colorPanel.style.display = 'none';
+    var PALETTE = [
+      '#000000','#1f2937','#374151','#6b7280','#9ca3af','#e5e7eb','#f9fafb','#ffffff',
+      '#7f1d1d','#b91c1c','#ef4444','#f97316','#f59e0b','#fbbf24','#fde68a','#fef9c3',
+      '#14532d','#16a34a','#4ade80','#0d9488','#22d3ee','#3b82f6','#6366f1','#a855f7',
+      '#2a7c6f','#1e3530','#1d4ed8','#7c3aed','#be185d','#ec4899','#9f1239','#4c1d95',
+    ];
+    var swatchGrid = document.createElement('div');
+    swatchGrid.className = 'px-swatches';
+    PALETTE.forEach(function(color) {
+      var sw = document.createElement('div');
+      sw.className = 'px-swatch';
+      sw.style.background = color;
+      sw.title = color;
+      if (color === '#ffffff') sw.style.border = '2px solid #e5e7eb';
+      sw.addEventListener('mousedown', function(e) { e.preventDefault(); applyColor(color); });
+      swatchGrid.appendChild(sw);
+    });
+    colorPanel.appendChild(swatchGrid);
+    var colorRow = document.createElement('div');
+    colorRow.className = 'px-color-row';
+    var colorPreview = document.createElement('div');
+    colorPreview.id = 'pixel-color-preview';
+    colorPreview.style.background = '#000000';
+    var colorHex = document.createElement('input');
+    colorHex.type = 'text'; colorHex.id = 'pixel-color-hex';
+    colorHex.placeholder = '#000000'; colorHex.maxLength = 7;
+    var colorApply = document.createElement('button');
+    colorApply.id = 'pixel-color-apply'; colorApply.textContent = '↵';
+    colorApply.title = 'Apply color';
+    colorRow.appendChild(colorPreview); colorRow.appendChild(colorHex); colorRow.appendChild(colorApply);
+    colorPanel.appendChild(colorRow);
+    var colorNone = document.createElement('span');
+    colorNone.id = 'pixel-color-none'; colorNone.textContent = 'Remove color';
+    colorPanel.appendChild(colorNone);
+    colorWrap.appendChild(colorPanel);
+    toolbar.appendChild(colorWrap);
+
+    // Color panel logic
+    function applyColor(color) {
+      if (!_editingEl) return;
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('foreColor', false, color);
+      var ind = document.getElementById('pixel-color-indicator');
+      if (ind) ind.style.borderBottomColor = color;
+      colorPreview.style.background = color;
+      colorHex.value = color;
+      colorPanel.style.display = 'none';
+      _editingEl.focus();
+    }
+    colorBtn.addEventListener('click', function() {
+      colorPanel.style.display = colorPanel.style.display === 'none' ? 'block' : 'none';
+    });
+    colorHex.addEventListener('input', function() {
+      var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value;
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) colorPreview.style.background = val;
+    });
+    colorHex.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value; if (/^#[0-9a-fA-F]{6}$/.test(val)) applyColor(val); }
+    });
+    colorApply.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      var val = colorHex.value.startsWith('#') ? colorHex.value : '#' + colorHex.value;
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) applyColor(val);
+    });
+    colorNone.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      if (!_editingEl) return;
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('foreColor', false, 'inherit');
+      var ind = document.getElementById('pixel-color-indicator');
+      if (ind) ind.style.borderBottomColor = '#ffffff';
+      colorPanel.style.display = 'none';
+      _editingEl.focus();
+    });
+    sep();
+
+    // Alignment
+    var alignSvgs = {
+      left: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="0" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="0" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
+      center: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="2" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="1" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
+      right: '<svg width="13" height="11" viewBox="0 0 13 11" fill="currentColor"><rect x="0" y="0" width="13" height="1.8" rx="0.9"/><rect x="4" y="4.6" width="9" height="1.8" rx="0.9"/><rect x="2" y="9.2" width="11" height="1.8" rx="0.9"/></svg>',
+    };
+    btn(alignSvgs.left, 'Align left', {'data-align':'left'});
+    btn(alignSvgs.center, 'Align center', {'data-align':'center'});
+    btn(alignSvgs.right, 'Align right', {'data-align':'right'});
+    sep();
+
+    btn('&#8855;', 'Clear formatting', {'data-action':'clear'});
+    sep();
+
     btn('&#8226;&#8213;', 'Bullet list', {'data-list':'ul'});
     btn('1&#8213;', 'Numbered list', {'data-list':'ol'});
     sep();
@@ -279,6 +398,29 @@ export default function SiteEditorPage() {
       if (px > 0 && _editingEl) _editingEl.style.fontSize = px + 'px';
     });
 
+    // Alignment buttons
+    toolbar.querySelectorAll('[data-align]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        if (!_editingEl) return;
+        _editingEl.style.textAlign = b.getAttribute('data-align');
+        updateToolbarState();
+      });
+    });
+
+    // Clear formatting
+    toolbar.querySelectorAll('[data-action="clear"]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        if (!_editingEl) return;
+        document.execCommand('removeFormat');
+        _editingEl.style.fontSize = '';
+        _editingEl.style.fontFamily = '';
+        _editingEl.style.textAlign = '';
+        _editingEl.style.color = '';
+        _editingEl.focus();
+        updateToolbarState();
+      });
+    });
+
     // Aa button — opens font picker in parent
     toolbar.querySelectorAll('[data-action="font"]').forEach(function(b) {
       b.addEventListener('click', function() {
@@ -291,14 +433,36 @@ export default function SiteEditorPage() {
   function updateToolbarState() {
     if (!_editingEl || !toolbar) return;
     var tag = _editingEl.tagName.toLowerCase();
+    // Tag buttons
     toolbar.querySelectorAll('[data-tag]').forEach(function(b) {
       b.classList.toggle('px-active', b.getAttribute('data-tag') === tag);
     });
+    // Cmd state (bold, italic, underline, strikethrough)
     toolbar.querySelectorAll('[data-cmd]').forEach(function(b) {
       try { b.classList.toggle('px-active', document.queryCommandState(b.getAttribute('data-cmd'))); } catch(e) {}
     });
+    // Alignment
+    var align = _editingEl.style.textAlign || window.getComputedStyle(_editingEl).textAlign || 'left';
+    toolbar.querySelectorAll('[data-align]').forEach(function(b) {
+      b.classList.toggle('px-active', b.getAttribute('data-align') === align);
+    });
+    // Font size
     var fs = _editingEl.style.fontSize || window.getComputedStyle(_editingEl).fontSize;
     if (fs && pxInput) pxInput.value = parseInt(fs) || '';
+    // Color indicator
+    var color = window.getComputedStyle(_editingEl).color;
+    if (color) {
+      try {
+        var m = color.match(/\d+/g);
+        if (m && m.length >= 3) {
+          var hex = '#' + [m[0],m[1],m[2]].map(function(n) { return ('0'+parseInt(n).toString(16)).slice(-2); }).join('');
+          var ind = document.getElementById('pixel-color-indicator');
+          if (ind) ind.style.borderBottomColor = hex;
+          var prev = document.getElementById('pixel-color-preview');
+          if (prev) prev.style.background = hex;
+        }
+      } catch(e) {}
+    }
   }
 
   function positionToolbar(el) {
@@ -328,6 +492,7 @@ export default function SiteEditorPage() {
       _editingOrigHtml = newHtml;
     }
     toolbar.style.display = 'none';
+    var cp = document.getElementById('pixel-color-panel'); if (cp) cp.style.display = 'none';
     window.parent.postMessage({ type:'PIXEL_TEXT_END' }, '*');
     _editingEl = null; _editingOrigHtml = '';
   }
@@ -388,7 +553,17 @@ export default function SiteEditorPage() {
     if (!_editingEl || e.target !== _editingEl) return;
     var rel = e.relatedTarget;
     if (rel && toolbar && toolbar.contains(rel)) return;
+    // If focus went to the color hex input, don't save yet
+    if (rel && rel.id === 'pixel-color-hex') return;
     saveCurrentEdit();
+  });
+
+  // Close color panel on click outside toolbar
+  document.addEventListener('click', function(e) {
+    var cp = document.getElementById('pixel-color-panel');
+    if (cp && cp.style.display !== 'none' && !toolbar.contains(e.target)) {
+      cp.style.display = 'none';
+    }
   });
 
   document.addEventListener('keydown', function(e) {
