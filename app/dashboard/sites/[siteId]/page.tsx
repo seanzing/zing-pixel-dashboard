@@ -271,10 +271,6 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
-      } catch(e) {}
-    }
-  }
-
   function saveCurrentEdit() {
     clearTimeout(_saveTimer); _saveTimer = null;
     if (!_editingEl) return;
@@ -367,11 +363,6 @@ export default function SiteEditorPage() {
       var t = _editingEl.tagName.toLowerCase();
       if (t !== 'p' && t !== 'li') { e.preventDefault(); saveCurrentEdit(); }
     }
-  });
-
-  document.addEventListener('selectionchange', function() {
-    if (!_editingEl) return;
-    sendSelectionState();
   });
 
   // ─── Image Clickable ──────────────────────────────────────────────────────
