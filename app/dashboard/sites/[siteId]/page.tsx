@@ -949,11 +949,24 @@ export default function SiteEditorPage() {
 
   function applyFont(family: string, linkHref: string) {
     setCurrentFont(family);
-    // Send font down to iframe
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: "PIXEL_SET_FONTFAMILY", family },
-      "*"
-    );
+    // Apply directly via contentDocument (PIXEL_SET_FONTFAMILY postMessage no longer handled)
+    const doc = iframeRef.current?.contentDocument;
+    const el = doc?.querySelector('[contenteditable="true"]') as HTMLElement | null;
+    if (el && doc) {
+      el.style.fontFamily = family;
+      if (linkHref) {
+        let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement | null;
+        if (link) { link.href = linkHref; }
+        else {
+          link = doc.createElement('link');
+          link.rel = 'stylesheet';
+          link.setAttribute('data-pixel-font', '1');
+          link.href = linkHref;
+          doc.head.appendChild(link);
+        }
+      }
+      el.focus({ preventScroll: true }); // keep editing session alive
+    }
     // Also persist the Google Fonts link in localHtml
     if (linkHref) {
       setLocalPages(prev => {
