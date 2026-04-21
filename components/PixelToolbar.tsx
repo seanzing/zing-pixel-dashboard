@@ -39,6 +39,50 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
   const [fontSize, setFontSize] = useState<string>("");
   const toolbarRef = useRef<HTMLDivElement>(null);
   const colorPanelRef = useRef<HTMLDivElement>(null);
+  const savedRangeRef = useRef<Range | null>(null);
+
+  // --- Direct iframe access helpers ---
+  function getIframeDoc() {
+    return iframeRef.current?.contentDocument ?? null;
+  }
+  function getIframeWin() {
+    return iframeRef.current?.contentWindow ?? null;
+  }
+  function getEditingEl(): HTMLElement | null {
+    return (getIframeDoc()?.querySelector('[contenteditable="true"]') as HTMLElement) ?? null;
+  }
+
+  // Save iframe selection on mousedown (before focus moves to parent)
+  function saveIframeSelection() {
+    const sel = getIframeWin()?.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      try { savedRangeRef.current = sel.getRangeAt(0).cloneRange(); } catch { /* noop */ }
+    }
+  }
+
+  // Refocus iframe editing element and restore selection
+  function restoreIframeFocus() {
+    const el = getEditingEl();
+    const iframeWin = getIframeWin();
+    if (!el || !iframeWin) return false;
+    el.focus({ preventScroll: true });
+    if (savedRangeRef.current) {
+      try {
+        const sel = iframeWin.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(savedRangeRef.current); }
+      } catch { /* noop */ }
+    }
+    return true;
+  }
+
+  // Execute a formatting command directly on the iframe document
+  function execCmd(cmd: string, value?: string) {
+    if (!restoreIframeFocus()) return;
+    const doc = getIframeDoc();
+    if (!doc) return;
+    doc.execCommand('styleWithCSS', false, 'true');
+    doc.execCommand(cmd, false, value ?? '');
+  }
 
   // Sync font size from state
   useEffect(() => {
@@ -64,22 +108,6 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
 
   if (!state || !state.isEditing || !iframeRect) return null;
 
-  function sendCmd(cmd: string, value?: string) {
-    iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_CMD", cmd, value }, "*");
-  }
-
-  function sendAlign(align: string) {
-    iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_SET_ALIGN", align }, "*");
-  }
-
-  function sendFontSize(size: number) {
-    iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_SET_FONTSIZE", size }, "*");
-  }
-
-  function sendClearFormat() {
-    iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_CLEAR_FORMAT" }, "*");
-  }
-
   function sendConvertTag(tag: string) {
     iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_CONVERT_TAG", tag }, "*");
   }
@@ -89,9 +117,66 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
   }
 
   function applyColor(color: string) {
-    iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_CMD", cmd: "foreColor", value: color }, "*");
+    if (!restoreIframeFocus()) return;
+    const doc = getIframeDoc();
+    if (!doc) return;
+    const sel = getIframeWin()?.getSelection();
+    if (sel && !sel.isCollapsed) {
+      doc.execCommand('styleWithCSS', false, 'true');
+      doc.execCommand('foreColor', false, color);
+    } else {
+      const el = getEditingEl();
+      if (el) el.style.color = color;
+    }
     setColorHex(color);
     setShowColorPanel(false);
+  }
+
+  function applyAlign(align: string) {
+    if (!restoreIframeFocus()) return;
+    const el = getEditingEl();
+    if (el) el.style.textAlign = align;
+  }
+
+  function applyFontSize(size: number) {
+    if (!restoreIframeFocus()) return;
+    const el = getEditingEl();
+    if (el) el.style.fontSize = size + 'px';
+  }
+
+  function clearFormatting() {
+    if (!restoreIframeFocus()) return;
+    const doc = getIframeDoc();
+    const el = getEditingEl();
+    if (!doc || !el) return;
+    doc.execCommand('removeFormat');
+    el.querySelectorAll('span[style*="color"],font[color]').forEach((n) => {
+      const p = n.parentNode;
+      if (!p) return;
+      while (n.firstChild) p.insertBefore(n.firstChild, n);
+      p.removeChild(n);
+    });
+    try { el.normalize(); } catch { /* noop */ }
+    el.style.fontSize = ''; el.style.fontFamily = '';
+    el.style.textAlign = ''; el.style.color = '';
+  }
+
+  function applyFontFamily(family: string) {
+    if (!restoreIframeFocus()) return;
+    const el = getEditingEl();
+    const doc = getIframeDoc();
+    if (!el || !doc) return;
+    el.style.fontFamily = family;
+    const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700&display=swap`;
+    let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement;
+    if (link) { link.href = href; }
+    else {
+      link = doc.createElement('link');
+      link.rel = 'stylesheet';
+      link.setAttribute('data-pixel-font', '1');
+      link.href = href;
+      doc.head.appendChild(link);
+    }
   }
 
   // Position: above the editing element, converted from iframe coords to parent viewport
@@ -130,16 +215,16 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
       className="flex items-center gap-[2px] bg-[#1a1d21] rounded-[9px] px-[7px] py-[5px] shadow-[0_6px_24px_rgba(0,0,0,0.4)] select-none font-[system-ui,sans-serif]"
     >
       {/* Bold / Italic / Underline / Strikethrough */}
-      <button className={btnClass(state.bold)} onMouseDown={(e) => { e.preventDefault(); sendCmd("bold"); }}>
+      <button className={btnClass(state.bold)} onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => execCmd("bold")}>
         <b>B</b>
       </button>
-      <button className={btnClass(state.italic)} onMouseDown={(e) => { e.preventDefault(); sendCmd("italic"); }}>
+      <button className={btnClass(state.italic)} onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => execCmd("italic")}>
         <i style={{ fontStyle: "italic" }}>I</i>
       </button>
-      <button className={btnClass(state.underline)} onMouseDown={(e) => { e.preventDefault(); sendCmd("underline"); }}>
+      <button className={btnClass(state.underline)} onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => execCmd("underline")}>
         <u style={{ textDecoration: "underline" }}>U</u>
       </button>
-      <button className={btnClass(state.strikethrough)} onMouseDown={(e) => { e.preventDefault(); sendCmd("strikeThrough"); }}>
+      <button className={btnClass(state.strikethrough)} onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => execCmd("strikeThrough")}>
         <s>S</s>
       </button>
 
@@ -150,7 +235,7 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
         <button
           className={btnClass(false)}
           title="Text color"
-          onMouseDown={(e) => { e.preventDefault(); setShowColorPanel((p) => !p); }}
+          onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); setShowColorPanel((p) => !p); }}
         >
           <span style={{ fontWeight: 700, fontSize: 13, borderBottom: `3px solid ${state.color || "#ffffff"}`, paddingBottom: 0, lineHeight: "1.2", display: "inline-block" }}>
             A
@@ -171,7 +256,8 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
                     background: color,
                     ...(color === "#ffffff" ? { border: "2px solid #e5e7eb" } : {}),
                   }}
-                  onMouseDown={(e) => { e.preventDefault(); applyColor(color); }}
+                  onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }}
+                  onClick={() => applyColor(color)}
                 />
               ))}
             </div>
@@ -198,6 +284,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
                 className="bg-[#2a7c6f] text-white border-none rounded-[5px] text-[11px] font-bold px-[7px] py-[3px] cursor-pointer hover:bg-[#1e3530]"
                 onMouseDown={(e) => {
                   e.preventDefault();
+                  saveIframeSelection();
+                }}
+                onClick={() => {
                   const val = colorHex.startsWith("#") ? colorHex : "#" + colorHex;
                   if (/^#[0-9a-fA-F]{6}$/.test(val)) applyColor(val);
                 }}
@@ -209,7 +298,10 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
               className="text-[10px] text-[#6b7280] cursor-pointer underline block text-center mt-[6px] hover:text-[#374151]"
               onMouseDown={(e) => {
                 e.preventDefault();
-                sendClearFormat();
+                saveIframeSelection();
+              }}
+              onClick={() => {
+                clearFormatting();
                 setShowColorPanel(false);
               }}
             >
@@ -227,7 +319,8 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
           key={align}
           className={btnClass(state.align === align)}
           title={`Align ${align}`}
-          onMouseDown={(e) => { e.preventDefault(); sendAlign(align); }}
+          onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }}
+          onClick={() => applyAlign(align)}
           dangerouslySetInnerHTML={{ __html: alignSvgs[align] }}
         />
       ))}
@@ -235,17 +328,17 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 
       {/* Clear formatting */}
-      <button className={btnClass(false)} title="Clear formatting" onMouseDown={(e) => { e.preventDefault(); sendClearFormat(); }}>
+      <button className={btnClass(false)} title="Clear formatting" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => clearFormatting()}>
         &#8855;
       </button>
 
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 
       {/* Lists */}
-      <button className={btnClass(false)} title="Bullet list" onMouseDown={(e) => { e.preventDefault(); sendConvertList("ul"); }}>
+      <button className={btnClass(false)} title="Bullet list" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => sendConvertList("ul")}>
         &#8226;&#8213;
       </button>
-      <button className={btnClass(false)} title="Numbered list" onMouseDown={(e) => { e.preventDefault(); sendConvertList("ol"); }}>
+      <button className={btnClass(false)} title="Numbered list" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => sendConvertList("ol")}>
         1&#8213;
       </button>
 
@@ -257,7 +350,8 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
           key={tag}
           className={btnClass(state.elementTag === tag)}
           title={`Convert to <${tag}>`}
-          onMouseDown={(e) => { e.preventDefault(); sendConvertTag(tag); }}
+          onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }}
+          onClick={() => sendConvertTag(tag)}
         >
           {tag.toUpperCase()}
         </button>
@@ -278,12 +372,12 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
           if (e.key === "Enter" || e.key === "Tab") {
             e.preventDefault();
             const px = parseInt(fontSize);
-            if (px > 0) sendFontSize(px);
+            if (px > 0) applyFontSize(px);
           }
         }}
         onBlur={() => {
           const px = parseInt(fontSize);
-          if (px > 0) sendFontSize(px);
+          if (px > 0) applyFontSize(px);
         }}
         className="w-[44px] bg-[#374151] border border-[#4b5563] rounded-[5px] text-[#e5e7eb] text-xs font-semibold px-[5px] py-[3px] text-center outline-none focus:border-[#2a7c6f] focus:bg-[#1f2937] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
@@ -291,7 +385,7 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 
       {/* Font picker */}
-      <button className={btnClass(false)} title="Font family" onMouseDown={(e) => { e.preventDefault(); onFontPickerOpen(); }}>
+      <button className={btnClass(false)} title="Font family" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => onFontPickerOpen()}>
         Aa
       </button>
     </div>

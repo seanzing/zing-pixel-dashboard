@@ -346,13 +346,18 @@ export default function SiteEditorPage() {
   document.addEventListener('focusout', function(e) {
     if (!_editingEl || e.target !== _editingEl) return;
     // Debounce: clicking the parent-document toolbar causes focusout here
-    // BEFORE the PIXEL_CMD message arrives. Wait 300ms — if a command arrives
-    // first, the timer is cancelled and the session stays alive.
+    // BEFORE the parent re-focuses the editing element. Wait 400ms — if focus
+    // returns first, the timer is cancelled and the session stays alive.
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(function() {
       _saveTimer = null;
       if (_editingEl) saveCurrentEdit();
-    }, 300);
+    }, 400);
+  });
+
+  // focusin: when editing element regains focus, cancel _saveTimer to keep session alive
+  document.addEventListener('focusin', function(e) {
+    if (e.target === _editingEl) { clearTimeout(_saveTimer); _saveTimer = null; }
   });
 
   document.addEventListener('keydown', function(e) {
@@ -442,46 +447,19 @@ export default function SiteEditorPage() {
     });
   }
 
-  // Handle commands from parent (toolbar is in parent document)
+  // Handle commands from parent that require complex DOM restructuring
+  // (formatting commands are now handled directly by the parent via contentDocument access)
   window.addEventListener('message', function(e) {
     var d = e.data;
     if (!d || !d.type) return;
-    // Not a toolbar command — ignore
-    var toolbarTypes = ['PIXEL_CMD','PIXEL_SET_ALIGN','PIXEL_SET_FONTSIZE','PIXEL_SET_FONTFAMILY','PIXEL_CLEAR_FORMAT','PIXEL_CONVERT_TAG','PIXEL_CONVERT_LIST'];
+    var toolbarTypes = ['PIXEL_CONVERT_TAG','PIXEL_CONVERT_LIST'];
     if (toolbarTypes.indexOf(d.type) === -1) return;
     // Cancel any pending focusout save — keep the edit session alive
     clearTimeout(_saveTimer); _saveTimer = null;
     if (!_editingEl) return;
     // Restore focus + selection before executing (focus left iframe when user clicked parent toolbar)
     restoreForCommand();
-    if (d.type === 'PIXEL_CMD') {
-      document.execCommand('styleWithCSS', false, true);
-      document.execCommand(d.cmd, false, d.value || null);
-    } else if (d.type === 'PIXEL_SET_ALIGN') {
-      _editingEl.style.textAlign = d.align;
-    } else if (d.type === 'PIXEL_SET_FONTSIZE') {
-      _editingEl.style.fontSize = d.size + 'px';
-    } else if (d.type === 'PIXEL_SET_FONTFAMILY') {
-      _editingEl.style.fontFamily = d.family;
-      var existingLink = document.querySelector('link[data-pixel-font]');
-      if (existingLink) existingLink.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(d.family) + ':wght@300;400;500;600;700&display=swap';
-      else {
-        var link = document.createElement('link');
-        link.rel = 'stylesheet'; link.setAttribute('data-pixel-font', '1');
-        link.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(d.family) + ':wght@300;400;500;600;700&display=swap';
-        document.head.appendChild(link);
-      }
-    } else if (d.type === 'PIXEL_CLEAR_FORMAT') {
-      document.execCommand('removeFormat');
-      _editingEl.querySelectorAll('span[style*="color"],font[color]').forEach(function(n) {
-        var p = n.parentNode; if (!p) return;
-        while (n.firstChild) p.insertBefore(n.firstChild, n);
-        p.removeChild(n);
-      });
-      try { _editingEl.normalize(); } catch(e2) {}
-      _editingEl.style.fontSize = ''; _editingEl.style.fontFamily = '';
-      _editingEl.style.textAlign = ''; _editingEl.style.color = '';
-    } else if (d.type === 'PIXEL_CONVERT_TAG') {
+    if (d.type === 'PIXEL_CONVERT_TAG') {
       convertTag(d.tag);
     } else if (d.type === 'PIXEL_CONVERT_LIST') {
       convertToList(d.listTag);
@@ -1365,7 +1343,20 @@ export default function SiteEditorPage() {
           iframeRect={iframeRect}
           onFontPickerOpen={() => setShowFontPicker(true)}
           onFontSelect={(family) => {
-            iframeRef.current?.contentWindow?.postMessage({ type: "PIXEL_SET_FONTFAMILY", family }, "*");
+            const doc = iframeRef.current?.contentDocument;
+            const el = doc?.querySelector('[contenteditable="true"]') as HTMLElement | null;
+            if (!el || !doc) return;
+            el.style.fontFamily = family;
+            const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700&display=swap`;
+            let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement | null;
+            if (link) { link.href = href; }
+            else {
+              link = doc.createElement('link');
+              link.rel = 'stylesheet';
+              link.setAttribute('data-pixel-font', '1');
+              link.href = href;
+              doc.head.appendChild(link);
+            }
           }}
         />
       )}
