@@ -97,8 +97,8 @@ export default function SiteEditorPage() {
 
   // Text editing state
   const [textEditing, setTextEditing] = useState(false);
-  const [showFontPicker, setShowFontPicker] = useState(false);
   const [currentFont, setCurrentFont] = useState<string | undefined>();
+  const [showSidebarFontPicker, setShowSidebarFontPicker] = useState(false);
   const pendingRebuildRef = useRef(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -209,30 +209,11 @@ export default function SiteEditorPage() {
   var _imgSelected = null;
   var _editingEl = null;
   var _editingOrigHtml = '';
-  var _savedRange = null;  // last known selection, saved on selectionchange
-  var _saveTimer = null;   // debounce focusout → saveCurrentEdit
-
   // Save selection continuously so we can restore it after focus returns to iframe
   document.addEventListener('selectionchange', function() {
     if (!_editingEl) return;
-    var sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && _editingEl.contains(sel.anchorNode)) {
-      _savedRange = sel.getRangeAt(0).cloneRange();
-    }
     sendSelectionState();
   });
-
-  // Restore iframe focus + saved selection before executing any command
-  function restoreForCommand() {
-    if (!_editingEl) return;
-    _editingEl.focus({ preventScroll: true });
-    if (_savedRange) {
-      try {
-        var sel = window.getSelection();
-        if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
-      } catch(e) {}
-    }
-  }
 
   // ─── Selection State → Parent ─────────────────────────────────────────────
   function sendSelectionState() {
@@ -271,12 +252,7 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
-  // Exposed so the parent can cancel the debounce timer before interacting
-  // with toolbar inputs (font size, font picker) that take more than 400ms.
-  window._pixelCancelSave = function() { clearTimeout(_saveTimer); _saveTimer = null; };
-
   function saveCurrentEdit() {
-    clearTimeout(_saveTimer); _saveTimer = null;
     if (!_editingEl) return;
     var el = _editingEl, orig = _editingOrigHtml;
     el.contentEditable = 'false';
@@ -343,23 +319,6 @@ export default function SiteEditorPage() {
   }
 
   // ─── Global Listeners ─────────────────────────────────────────────────────
-  document.addEventListener('focusout', function(e) {
-    if (!_editingEl || e.target !== _editingEl) return;
-    // Debounce: clicking the parent-document toolbar causes focusout here
-    // BEFORE the parent re-focuses the editing element. Wait 400ms — if focus
-    // returns first, the timer is cancelled and the session stays alive.
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(function() {
-      _saveTimer = null;
-      if (_editingEl) saveCurrentEdit();
-    }, 400);
-  });
-
-  // focusin: when editing element regains focus, cancel _saveTimer to keep session alive
-  document.addEventListener('focusin', function(e) {
-    if (e.target === _editingEl) { clearTimeout(_saveTimer); _saveTimer = null; }
-  });
-
   document.addEventListener('keydown', function(e) {
     if (!_editingEl || !_editingEl.isContentEditable) return;
     if (e.key === 'Escape') { saveCurrentEdit(); return; }
@@ -432,12 +391,18 @@ export default function SiteEditorPage() {
       if (el.textContent.trim().length < 5 || el.querySelector('img')) return;
       makeTextEditable(el, tIdx++);
     });
-    // Dismiss on blank area click
+    // Save text / deselect image when clicking outside relevant elements
     document.addEventListener('click', function(e) {
-      if (!_imgSelected) return;
-      if (!e.target.closest('[data-pixel-el]') && !e.target.closest('[data-pixel-text]')) {
+      var onText = e.target.closest('[data-pixel-text]');
+      var onImg = e.target.closest('[data-pixel-el]');
+      // Save text editing session if click landed outside all text elements
+      if (_editingEl && !onText) {
+        saveCurrentEdit();
+      }
+      // Deselect image if click landed outside all image/text elements
+      if (_imgSelected && !onImg && !onText) {
         clearImgSelection();
-        window.parent.postMessage({ type:'PIXEL_DESELECT' }, '*');
+        window.parent.postMessage({ type: 'PIXEL_DESELECT' }, '*');
       }
     });
   }
@@ -447,19 +412,11 @@ export default function SiteEditorPage() {
   window.addEventListener('message', function(e) {
     var d = e.data;
     if (!d || !d.type) return;
-    var toolbarTypes = ['PIXEL_CONVERT_TAG','PIXEL_CONVERT_LIST'];
-    if (toolbarTypes.indexOf(d.type) === -1) return;
-    // Cancel any pending focusout save — keep the edit session alive
-    clearTimeout(_saveTimer); _saveTimer = null;
-    if (!_editingEl) return;
-    // Restore focus + selection before executing (focus left iframe when user clicked parent toolbar)
-    restoreForCommand();
     if (d.type === 'PIXEL_CONVERT_TAG') {
-      convertTag(d.tag);
+      if (_editingEl) convertTag(d.tag);
     } else if (d.type === 'PIXEL_CONVERT_LIST') {
-      convertToList(d.listTag);
+      if (_editingEl) convertToList(d.listTag);
     }
-    sendSelectionState();
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
@@ -965,9 +922,7 @@ export default function SiteEditorPage() {
           doc.head.appendChild(link);
         }
       }
-      // Do NOT call el.focus() — it re-focuses the iframe, causing a new
-      // focusout on the next font picker click, which would restart the
-      // save timer and close the picker 400ms later.
+      // Do NOT call el.focus() — focus should stay in the parent document
     }
     // Also persist the Google Fonts link in localHtml
     if (linkHref) {
@@ -1169,7 +1124,7 @@ export default function SiteEditorPage() {
         setSelectedImg(null); // close image panel if open
       } else if (e.data?.type === "PIXEL_TEXT_END") {
         setTextEditing(false);
-        setShowFontPicker(false);
+        setShowSidebarFontPicker(false);
       } else if (e.data?.type === "PIXEL_SELECTION_STATE") {
         if (e.data.isEditing) {
           setToolbarState(e.data as SelectionState);
@@ -1351,21 +1306,20 @@ export default function SiteEditorPage() {
           state={toolbarState}
           iframeRef={iframeRef}
           iframeRect={iframeRect}
-          onFontPickerOpen={() => setShowFontPicker(true)}
-          onFontSelect={(family) => {
-            const doc = iframeRef.current?.contentDocument;
-            const el = doc?.querySelector('[contenteditable="true"]') as HTMLElement | null;
-            if (!el || !doc) return;
-            el.style.fontFamily = family;
-            const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700&display=swap`;
-            let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement | null;
-            if (link) { link.href = href; }
-            else {
-              link = doc.createElement('link');
-              link.rel = 'stylesheet';
-              link.setAttribute('data-pixel-font', '1');
-              link.href = href;
-              doc.head.appendChild(link);
+          onFontSelect={(family, linkHref) => {
+            setCurrentFont(family);
+            if (linkHref) {
+              setLocalPages(prev => {
+                const current = prev[currentPage];
+                if (!current) return prev;
+                if (current.includes(linkHref)) return prev;
+                const stripped = current.replace(/<link[^>]+data-pixel-font[^>]+>/g, '');
+                const tag = `<link rel="stylesheet" href="${linkHref}" data-pixel-font="true">`;
+                const updated = stripped.includes('</head>')
+                  ? stripped.replace('</head>', `${tag}\n</head>`)
+                  : tag + stripped;
+                return { ...prev, [currentPage]: updated };
+              });
             }
           }}
         />
@@ -2032,20 +1986,20 @@ export default function SiteEditorPage() {
                           {/* Font picker trigger */}
                           <div className="relative">
                             <button
-                              onClick={() => setShowFontPicker(p => !p)}
+                              onClick={() => setShowSidebarFontPicker(p => !p)}
                               className={`text-xs px-2 py-0.5 rounded-full font-semibold border transition-colors ${
-                                showFontPicker
+                                showSidebarFontPicker
                                   ? "bg-zing-teal text-white border-zing-teal"
                                   : "border-gray-300 text-gray-600 hover:border-zing-teal hover:text-zing-teal"
                               }`}
                             >
                               Aa {currentFont ? `· ${currentFont}` : ""}
                             </button>
-                            {showFontPicker && (
+                            {showSidebarFontPicker && (
                               <FontPicker
                                 currentFont={currentFont}
                                 onSelect={applyFont}
-                                onClose={() => setShowFontPicker(false)}
+                                onClose={() => setShowSidebarFontPicker(false)}
                               />
                             )}
                           </div>

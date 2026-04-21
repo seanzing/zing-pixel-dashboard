@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import FontPicker from "@/components/FontPicker";
 
 export interface SelectionState {
   isEditing: boolean;
@@ -20,8 +21,7 @@ interface PixelToolbarProps {
   state: SelectionState | null;
   iframeRef: React.RefObject<HTMLIFrameElement | null>;
   iframeRect: DOMRect | null;
-  onFontPickerOpen: () => void;
-  onFontSelect: (family: string) => void;
+  onFontSelect: (family: string, linkHref: string) => void;
 }
 
 const PALETTE = [
@@ -33,13 +33,16 @@ const PALETTE = [
 
 const TOOLBAR_HEIGHT = 44;
 
-export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPickerOpen }: PixelToolbarProps) {
+export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelect }: PixelToolbarProps) {
   const [showColorPanel, setShowColorPanel] = useState(false);
+  const [showFontPicker, setShowFontPicker] = useState(false);
+  const [currentFont, setCurrentFont] = useState<string | undefined>();
   const [colorHex, setColorHex] = useState("#000000");
   const [fontSize, setFontSize] = useState<string>("");
   const toolbarRef = useRef<HTMLDivElement>(null);
   const colorPanelRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
+  const aaButtonRef = useRef<HTMLButtonElement>(null);
 
   // --- Direct iframe access helpers ---
   function getIframeDoc() {
@@ -50,13 +53,6 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
   }
   function getEditingEl(): HTMLElement | null {
     return (getIframeDoc()?.querySelector('[contenteditable="true"]') as HTMLElement) ?? null;
-  }
-
-  // Cancel the iframe's pending focusout save timer (called before user
-  // interacts with slow controls like the font size input or font picker)
-  function cancelIframeSave() {
-    const win = getIframeWin() as any;
-    if (typeof win?._pixelCancelSave === "function") win._pixelCancelSave();
   }
 
   // Save iframe selection on mousedown (before focus moves to parent)
@@ -96,9 +92,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
     if (state) setFontSize(String(state.fontSize || ""));
   }, [state?.fontSize]);
 
-  // Close color panel when editing ends
+  // Close panels when editing ends
   useEffect(() => {
-    if (!state) setShowColorPanel(false);
+    if (!state) { setShowColorPanel(false); setShowFontPicker(false); }
   }, [state]);
 
   // Close color panel on click outside
@@ -168,22 +164,28 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
     el.style.textAlign = ''; el.style.color = '';
   }
 
-  function applyFontFamily(family: string) {
-    // Style-only — no execCommand needed, no focus needed
+  function handleFontSelect(family: string, linkHref: string) {
+    setCurrentFont(family);
+    setShowFontPicker(false);
+    // Apply directly to iframe (style-only, no focus needed)
     const el = getEditingEl();
     const doc = getIframeDoc();
-    if (!el || !doc) return;
-    el.style.fontFamily = family;
-    const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700&display=swap`;
-    let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement;
-    if (link) { link.href = href; }
-    else {
-      link = doc.createElement('link');
-      link.rel = 'stylesheet';
-      link.setAttribute('data-pixel-font', '1');
-      link.href = href;
-      doc.head.appendChild(link);
+    if (el && doc) {
+      el.style.fontFamily = family;
+      if (linkHref) {
+        let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement;
+        if (link) { link.href = linkHref; }
+        else {
+          link = doc.createElement('link');
+          link.rel = 'stylesheet';
+          link.setAttribute('data-pixel-font', '1');
+          link.href = linkHref;
+          doc.head.appendChild(link);
+        }
+      }
     }
+    // Notify parent so it can persist the font link in localHtml
+    onFontSelect(family, linkHref);
   }
 
   // Position: above the editing element, converted from iframe coords to parent viewport
@@ -208,11 +210,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
     <div
       ref={toolbarRef}
       onMouseDown={(e) => {
-        // Always save iframe selection + cancel the pending save timer.
-        // Inputs are excluded from e.preventDefault() so they stay typeable,
-        // but we still cancel the timer and save the selection on every mousedown.
+        // Always save iframe selection before focus moves to parent.
+        // Inputs are excluded from e.preventDefault() so they stay typeable.
         saveIframeSelection();
-        cancelIframeSave();
         const tag = (e.target as HTMLElement).tagName;
         if (tag !== "INPUT") e.preventDefault();
       }}
@@ -385,7 +385,6 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
             if (px > 0) applyFontSize(px);
           }
         }}
-        onFocus={() => cancelIframeSave()}
         onBlur={() => {
           const px = parseInt(fontSize);
           if (px > 0) applyFontSize(px);
@@ -396,9 +395,38 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 
       {/* Font picker */}
-      <button className={btnClass(false)} title="Font family" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => { cancelIframeSave(); onFontPickerOpen(); }}>
+      <button
+        ref={aaButtonRef}
+        className={btnClass(false)}
+        title="Font family"
+        onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }}
+        onClick={() => setShowFontPicker(p => !p)}
+      >
         Aa
       </button>
+
+      {showFontPicker && (
+        <div
+          style={{
+            position: 'fixed',
+            top: clampedTop + TOOLBAR_HEIGHT + 8,
+            left: Math.min(clampedLeft + 400, window.innerWidth - 320),
+            zIndex: 2147483647,
+            width: 300,
+            maxHeight: 400,
+            overflowY: 'auto',
+            background: 'white',
+            borderRadius: 12,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+          }}
+        >
+          <FontPicker
+            currentFont={currentFont}
+            onSelect={handleFontSelect}
+            onClose={() => setShowFontPicker(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
