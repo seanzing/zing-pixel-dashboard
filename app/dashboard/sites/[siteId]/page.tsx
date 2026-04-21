@@ -965,7 +965,9 @@ export default function SiteEditorPage() {
           doc.head.appendChild(link);
         }
       }
-      el.focus({ preventScroll: true }); // keep editing session alive
+      // Do NOT call el.focus() — it re-focuses the iframe, causing a new
+      // focusout on the next font picker click, which would restart the
+      // save timer and close the picker 400ms later.
     }
     // Also persist the Google Fonts link in localHtml
     if (linkHref) {

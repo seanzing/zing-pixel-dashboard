@@ -140,13 +140,13 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
   }
 
   function applyAlign(align: string) {
-    if (!restoreIframeFocus()) return;
+    // Style-only — no execCommand needed, no focus needed
     const el = getEditingEl();
     if (el) el.style.textAlign = align;
   }
 
   function applyFontSize(size: number) {
-    if (!restoreIframeFocus()) return;
+    // Style-only — no execCommand needed, no focus needed
     const el = getEditingEl();
     if (el) el.style.fontSize = size + 'px';
   }
@@ -169,7 +169,7 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
   }
 
   function applyFontFamily(family: string) {
-    if (!restoreIframeFocus()) return;
+    // Style-only — no execCommand needed, no focus needed
     const el = getEditingEl();
     const doc = getIframeDoc();
     if (!el || !doc) return;
