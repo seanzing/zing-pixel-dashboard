@@ -52,6 +52,13 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
     return (getIframeDoc()?.querySelector('[contenteditable="true"]') as HTMLElement) ?? null;
   }
 
+  // Cancel the iframe's pending focusout save timer (called before user
+  // interacts with slow controls like the font size input or font picker)
+  function cancelIframeSave() {
+    const win = getIframeWin() as any;
+    if (typeof win?._pixelCancelSave === "function") win._pixelCancelSave();
+  }
+
   // Save iframe selection on mousedown (before focus moves to parent)
   function saveIframeSelection() {
     const sel = getIframeWin()?.getSelection();
@@ -201,8 +208,11 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
     <div
       ref={toolbarRef}
       onMouseDown={(e) => {
-        // Prevent toolbar clicks from stealing focus from the iframe
-        // (input fields excluded so they remain typeable)
+        // Always save iframe selection + cancel the pending save timer.
+        // Inputs are excluded from e.preventDefault() so they stay typeable,
+        // but we still cancel the timer and save the selection on every mousedown.
+        saveIframeSelection();
+        cancelIframeSave();
         const tag = (e.target as HTMLElement).tagName;
         if (tag !== "INPUT") e.preventDefault();
       }}
@@ -375,6 +385,7 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
             if (px > 0) applyFontSize(px);
           }
         }}
+        onFocus={() => cancelIframeSave()}
         onBlur={() => {
           const px = parseInt(fontSize);
           if (px > 0) applyFontSize(px);
@@ -385,7 +396,7 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontPicke
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 
       {/* Font picker */}
-      <button className={btnClass(false)} title="Font family" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => onFontPickerOpen()}>
+      <button className={btnClass(false)} title="Font family" onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => { cancelIframeSave(); onFontPickerOpen(); }}>
         Aa
       </button>
     </div>

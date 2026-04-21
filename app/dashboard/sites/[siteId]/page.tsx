@@ -271,6 +271,10 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
+  // Exposed so the parent can cancel the debounce timer before interacting
+  // with toolbar inputs (font size, font picker) that take more than 400ms.
+  window._pixelCancelSave = function() { clearTimeout(_saveTimer); _saveTimer = null; };
+
   function saveCurrentEdit() {
     clearTimeout(_saveTimer); _saveTimer = null;
     if (!_editingEl) return;
