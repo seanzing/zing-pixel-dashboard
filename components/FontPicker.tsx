@@ -91,8 +91,8 @@ export default function FontPicker({ currentFont, onSelect, onClose }: Props) {
   return (
     <div
       ref={containerRef}
-      className="absolute z-50 bg-white rounded-xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
-      style={{ width: 280, maxHeight: 420, top: "100%", left: 0, marginTop: 4 }}
+      className="bg-white rounded-xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+      style={{ width: 280, maxHeight: 420, position: "relative" }}
     >
       {/* Search */}
       <div className="p-2 border-b border-gray-100">

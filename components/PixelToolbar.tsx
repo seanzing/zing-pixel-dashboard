@@ -406,20 +406,10 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
       </button>
 
       {showFontPicker && (
-        <div
-          style={{
-            position: 'fixed',
-            top: clampedTop + TOOLBAR_HEIGHT + 8,
-            left: Math.min(clampedLeft + 400, window.innerWidth - 320),
-            zIndex: 2147483647,
-            width: 300,
-            maxHeight: 400,
-            overflowY: 'auto',
-            background: 'white',
-            borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
-          }}
-        >
+        // Wrapper is position:fixed for viewport placement but has NO height/overflow
+        // so FontPicker's internal "position:absolute; top:100%" resolves to top:0
+        // (100% of a 0-height parent = 0px offset) and is NOT clipped.
+        <div style={{ position: 'fixed', top: clampedTop + TOOLBAR_HEIGHT + 8, left: Math.max(8, Math.min(clampedLeft, window.innerWidth - 300)), zIndex: 2147483647 }}>
           <FontPicker
             currentFont={currentFont}
             onSelect={handleFontSelect}
