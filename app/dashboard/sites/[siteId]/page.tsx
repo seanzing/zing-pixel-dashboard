@@ -252,6 +252,27 @@ export default function SiteEditorPage() {
     return c.outerHTML;
   }
 
+  // Called by parent when font family changes. Applies style, adds Google Fonts link,
+  // and sends PIXEL_TEXT_CHANGE so localPages is updated and _editingOrigHtml stays in sync.
+  window._pixelApplyFontFamily = function(family, linkHref) {
+    if (!_editingEl) return;
+    _editingEl.style.fontFamily = family;
+    if (linkHref) {
+      var existingLink = document.querySelector('link[data-pixel-font]');
+      if (existingLink) { existingLink.href = linkHref; }
+      else {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet'; link.setAttribute('data-pixel-font', '1');
+        link.href = linkHref; document.head.appendChild(link);
+      }
+    }
+    var newHtml = cleanHtml(_editingEl);
+    if (newHtml !== _editingOrigHtml) {
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:_editingOrigHtml, newHtml:newHtml, needsRebuild:false }, '*');
+      _editingOrigHtml = newHtml;
+    }
+  };
+
   function saveCurrentEdit() {
     if (!_editingEl) return;
     var el = _editingEl, orig = _editingOrigHtml;
@@ -906,25 +927,13 @@ export default function SiteEditorPage() {
 
   function applyFont(family: string, linkHref: string) {
     setCurrentFont(family);
-    // Apply directly via contentDocument (PIXEL_SET_FONTFAMILY postMessage no longer handled)
-    const doc = iframeRef.current?.contentDocument;
-    const el = doc?.querySelector('[contenteditable="true"]') as HTMLElement | null;
-    if (el && doc) {
-      el.style.fontFamily = family;
-      if (linkHref) {
-        let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement | null;
-        if (link) { link.href = linkHref; }
-        else {
-          link = doc.createElement('link');
-          link.rel = 'stylesheet';
-          link.setAttribute('data-pixel-font', '1');
-          link.href = linkHref;
-          doc.head.appendChild(link);
-        }
-      }
-      // Do NOT call el.focus() — focus should stay in the parent document
+    // Use iframe's exposed function so the change goes through PIXEL_TEXT_CHANGE,
+    // updating localPages + _editingOrigHtml in sync (prevents revert on blob rebuild)
+    const iframeWin = iframeRef.current?.contentWindow as any;
+    if (typeof iframeWin?._pixelApplyFontFamily === "function") {
+      iframeWin._pixelApplyFontFamily(family, linkHref);
     }
-    // Also persist the Google Fonts link in localHtml
+    // Also persist the Google Fonts link in localHtml <head>
     if (linkHref) {
       setLocalPages(prev => {
         const current = prev[currentPage];

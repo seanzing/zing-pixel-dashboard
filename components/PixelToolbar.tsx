@@ -167,24 +167,14 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
   function handleFontSelect(family: string, linkHref: string) {
     setCurrentFont(family);
     setShowFontPicker(false);
-    // Apply directly to iframe (style-only, no focus needed)
-    const el = getEditingEl();
-    const doc = getIframeDoc();
-    if (el && doc) {
-      el.style.fontFamily = family;
-      if (linkHref) {
-        let link = doc.querySelector('link[data-pixel-font]') as HTMLLinkElement;
-        if (link) { link.href = linkHref; }
-        else {
-          link = doc.createElement('link');
-          link.rel = 'stylesheet';
-          link.setAttribute('data-pixel-font', '1');
-          link.href = linkHref;
-          doc.head.appendChild(link);
-        }
-      }
+    // Use the iframe's exposed function: applies style, adds Google Fonts link,
+    // and sends PIXEL_TEXT_CHANGE so localPages + _editingOrigHtml stay in sync.
+    // This is the same path as bold/italic — font family is NOT ephemeral.
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelApplyFontFamily === "function") {
+      iframeWin._pixelApplyFontFamily(family, linkHref);
     }
-    // Notify parent so it can persist the font link in localHtml
+    // Notify parent to also persist the font link in the <head> of localPages
     onFontSelect(family, linkHref);
   }
 
