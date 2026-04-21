@@ -209,6 +209,30 @@ export default function SiteEditorPage() {
   var _imgSelected = null;
   var _editingEl = null;
   var _editingOrigHtml = '';
+  var _savedRange = null;  // last known selection, saved on selectionchange
+  var _saveTimer = null;   // debounce focusout → saveCurrentEdit
+
+  // Save selection continuously so we can restore it after focus returns to iframe
+  document.addEventListener('selectionchange', function() {
+    if (!_editingEl) return;
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && _editingEl.contains(sel.anchorNode)) {
+      _savedRange = sel.getRangeAt(0).cloneRange();
+    }
+    sendSelectionState();
+  });
+
+  // Restore iframe focus + saved selection before executing any command
+  function restoreForCommand() {
+    if (!_editingEl) return;
+    _editingEl.focus({ preventScroll: true });
+    if (_savedRange) {
+      try {
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(_savedRange); }
+      } catch(e) {}
+    }
+  }
 
   // ─── Selection State → Parent ─────────────────────────────────────────────
   function sendSelectionState() {
@@ -252,6 +276,7 @@ export default function SiteEditorPage() {
   }
 
   function saveCurrentEdit() {
+    clearTimeout(_saveTimer); _saveTimer = null;
     if (!_editingEl) return;
     var el = _editingEl, orig = _editingOrigHtml;
     el.contentEditable = 'false';
@@ -320,7 +345,14 @@ export default function SiteEditorPage() {
   // ─── Global Listeners ─────────────────────────────────────────────────────
   document.addEventListener('focusout', function(e) {
     if (!_editingEl || e.target !== _editingEl) return;
-    saveCurrentEdit();
+    // Debounce: clicking the parent-document toolbar causes focusout here
+    // BEFORE the PIXEL_CMD message arrives. Wait 300ms — if a command arrives
+    // first, the timer is cancelled and the session stays alive.
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(function() {
+      _saveTimer = null;
+      if (_editingEl) saveCurrentEdit();
+    }, 300);
   });
 
   document.addEventListener('keydown', function(e) {
@@ -412,19 +444,23 @@ export default function SiteEditorPage() {
 
   // Handle commands from parent (toolbar is in parent document)
   window.addEventListener('message', function(e) {
-    if (!_editingEl) return;
     var d = e.data;
     if (!d || !d.type) return;
+    // Not a toolbar command — ignore
+    var toolbarTypes = ['PIXEL_CMD','PIXEL_SET_ALIGN','PIXEL_SET_FONTSIZE','PIXEL_SET_FONTFAMILY','PIXEL_CLEAR_FORMAT','PIXEL_CONVERT_TAG','PIXEL_CONVERT_LIST'];
+    if (toolbarTypes.indexOf(d.type) === -1) return;
+    // Cancel any pending focusout save — keep the edit session alive
+    clearTimeout(_saveTimer); _saveTimer = null;
+    if (!_editingEl) return;
+    // Restore focus + selection before executing (focus left iframe when user clicked parent toolbar)
+    restoreForCommand();
     if (d.type === 'PIXEL_CMD') {
       document.execCommand('styleWithCSS', false, true);
       document.execCommand(d.cmd, false, d.value || null);
-      sendSelectionState();
     } else if (d.type === 'PIXEL_SET_ALIGN') {
       _editingEl.style.textAlign = d.align;
-      sendSelectionState();
     } else if (d.type === 'PIXEL_SET_FONTSIZE') {
       _editingEl.style.fontSize = d.size + 'px';
-      sendSelectionState();
     } else if (d.type === 'PIXEL_SET_FONTFAMILY') {
       _editingEl.style.fontFamily = d.family;
       var existingLink = document.querySelector('link[data-pixel-font]');
@@ -435,7 +471,6 @@ export default function SiteEditorPage() {
         link.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(d.family) + ':wght@300;400;500;600;700&display=swap';
         document.head.appendChild(link);
       }
-      sendSelectionState();
     } else if (d.type === 'PIXEL_CLEAR_FORMAT') {
       document.execCommand('removeFormat');
       _editingEl.querySelectorAll('span[style*="color"],font[color]').forEach(function(n) {
@@ -446,12 +481,12 @@ export default function SiteEditorPage() {
       try { _editingEl.normalize(); } catch(e2) {}
       _editingEl.style.fontSize = ''; _editingEl.style.fontFamily = '';
       _editingEl.style.textAlign = ''; _editingEl.style.color = '';
-      sendSelectionState();
     } else if (d.type === 'PIXEL_CONVERT_TAG') {
       convertTag(d.tag);
     } else if (d.type === 'PIXEL_CONVERT_LIST') {
       convertToList(d.listTag);
     }
+    sendSelectionState();
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
