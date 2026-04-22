@@ -119,9 +119,9 @@ export default function SiteEditorPage() {
   const [linkEditValue, setLinkEditValue] = useState("");
   const linkEditRef = useRef<HTMLInputElement>(null);
 
-  // Section hover/action state
-  const [sectionHover, setSectionHover] = useState<{ rect: { top: number; left: number; width: number; height: number }; isHidden: boolean; sectionClass: string } | null>(null);
-  const [sectionAction, setSectionAction] = useState<{ isHidden: boolean } | null>(null);
+  // Section context-menu state
+  const [sectionHover] = [null]; // unused — kept for any remaining references
+  const [sectionAction, setSectionAction] = useState<{ isHidden: boolean; sectionClass: string; mouseX: number; mouseY: number } | null>(null);
 
   // Multi-page state
   type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
@@ -509,34 +509,20 @@ export default function SiteEditorPage() {
       if (section.offsetHeight < 60) return;
       if (section.hasAttribute('data-pixel-text') || section.hasAttribute('data-pixel-el')) return;
 
-      section.addEventListener('mouseenter', function(e) {
+      section.addEventListener('contextmenu', function(e) {
+        e.preventDefault(); e.stopPropagation();
         if (_editingEl) return;
-        _hoveredSection = section;
         var rect = section.getBoundingClientRect();
         var isHidden = section.dataset.pixelHidden === 'true';
-        window.parent.postMessage({
-          type: 'PIXEL_SECTION_HOVER',
-          rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
-          isHidden: isHidden,
-          sectionClass: section.className.slice(0, 60)
-        }, '*');
-      });
-
-      section.addEventListener('mouseleave', function(e) {
-        if (_hoveredSection === section) _hoveredSection = null;
-        window.parent.postMessage({ type: 'PIXEL_SECTION_HOVER', rect: null }, '*');
-      });
-
-      section.addEventListener('click', function(e) {
-        if (e.target.closest('[data-pixel-text],[data-pixel-el],a[href]')) return;
-        if (_editingEl) return;
-        var isHidden = section.dataset.pixelHidden === 'true';
+        window._pendingSectionEl = section;
         window.parent.postMessage({
           type: 'PIXEL_SECTION_CLICK',
           isHidden: isHidden,
-          origHtml: section.outerHTML
+          rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+          sectionClass: section.className.slice(0, 60),
+          mouseX: e.clientX,
+          mouseY: e.clientY
         }, '*');
-        window._pendingSectionEl = section;
       });
     });
 
@@ -799,7 +785,6 @@ export default function SiteEditorPage() {
     }
     setDirtyPages(d => new Set([...d, currentPage]));
     setSectionAction(null);
-    setSectionHover(null);
   }
 
   async function handleImageReplace() {
@@ -1325,18 +1310,30 @@ export default function SiteEditorPage() {
         setLinkEdit({ href: e.data.href, text: e.data.text, rect: e.data.rect });
         setLinkEditValue(e.data.href);
         setTimeout(() => linkEditRef.current?.select(), 50);
-      } else if (e.data?.type === "PIXEL_SECTION_HOVER") {
-        if (e.data.rect) {
-          setSectionHover({ rect: e.data.rect, isHidden: e.data.isHidden, sectionClass: e.data.sectionClass });
-        } else {
-          setSectionHover(null);
-        }
       } else if (e.data?.type === "PIXEL_SECTION_CLICK") {
-        setSectionAction({ isHidden: e.data.isHidden });
+        setSectionAction({
+          isHidden: e.data.isHidden,
+          sectionClass: e.data.sectionClass,
+          mouseX: (iframeRect?.left ?? 0) + e.data.mouseX,
+          mouseY: (iframeRect?.top ?? 0) + e.data.mouseY,
+        });
       }
     }
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
+  }, []);
+
+  // Close link popover and section context menu on outside click
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-pixel-popover]")) {
+        setLinkEdit(null);
+        setSectionAction(null);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
   }, []);
 
   // Re-fetch chat history when page changes (chat is scoped per page)
@@ -1993,7 +1990,6 @@ export default function SiteEditorPage() {
                   setChatMessages([]);
                   setLinkEdit(null);
                   setSectionAction(null);
-                  setSectionHover(null);
                 }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors group ${
                   currentPage === p.filename
@@ -2298,6 +2294,7 @@ export default function SiteEditorPage() {
                     {/* Link edit popover */}
                     {linkEdit && iframeRect && (
                       <div
+                        data-pixel-popover="1"
                         style={{
                           position: 'fixed',
                           top: iframeRect.top + linkEdit.rect.bottom + 8,
@@ -2346,63 +2343,45 @@ export default function SiteEditorPage() {
                       </div>
                     )}
 
-                    {/* Section hover overlay */}
-                    {sectionHover && iframeRect && sectionHover.rect && (
+                    {/* Section right-click context menu */}
+                    {sectionAction && (
                       <div
+                        data-pixel-popover="1"
                         style={{
                           position: 'fixed',
-                          top: iframeRect.top + sectionHover.rect.top,
-                          left: iframeRect.left + sectionHover.rect.left,
-                          width: Math.min(sectionHover.rect.width, iframeRect.width),
-                          height: sectionHover.rect.height,
-                          zIndex: 2147483644,
-                          pointerEvents: 'none',
-                          border: '2px dashed rgba(42,124,111,0.4)',
-                          borderRadius: 4,
-                        }}
-                      />
-                    )}
-
-                    {/* Section click action popover */}
-                    {sectionAction && sectionHover && iframeRect && (
-                      <div
-                        style={{
-                          position: 'fixed',
-                          top: iframeRect.top + sectionHover.rect.top + 12,
-                          left: iframeRect.left + sectionHover.rect.left + 12,
+                          top: Math.min(sectionAction.mouseY, window.innerHeight - 140),
+                          left: Math.min(sectionAction.mouseX, window.innerWidth - 220),
                           zIndex: 2147483645,
                           background: 'white',
                           borderRadius: 10,
                           boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
                           border: '1px solid #e5e7eb',
-                          padding: '10px 14px',
-                          display: 'flex',
-                          flexDirection: 'column' as const,
-                          gap: 8,
+                          padding: '6px',
                           minWidth: 200,
                         }}
                       >
-                        <div className="text-[11px] text-gray-400 font-medium">
-                          Section: <span className="text-gray-600">.{sectionHover.sectionClass.split(' ')[0]}</span>
+                        <div className="text-[10px] text-gray-400 font-medium px-3 py-1.5">
+                          Section{sectionAction.sectionClass ? `: .${sectionAction.sectionClass.split(' ')[0]}` : ''}
                         </div>
+                        <div className="w-full h-px bg-gray-100 mb-1" />
                         {sectionAction.isHidden ? (
                           <button
                             onClick={() => toggleSection(false)}
-                            className="text-xs bg-zing-teal text-white px-3 py-2 rounded-lg hover:bg-teal-700 text-left"
+                            className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-teal-50 text-teal-700 font-medium"
                           >
-                            Show this section
+                            👁 Show this section
                           </button>
                         ) : (
                           <button
                             onClick={() => toggleSection(true)}
-                            className="text-xs bg-red-50 text-red-600 px-3 py-2 rounded-lg hover:bg-red-100 text-left"
+                            className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 font-medium"
                           >
-                            Hide this section
+                            🙈 Hide this section
                           </button>
                         )}
                         <button
                           onClick={() => setSectionAction(null)}
-                          className="text-xs text-gray-400 hover:text-gray-600 text-left"
+                          className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-400"
                         >
                           Cancel
                         </button>
