@@ -273,6 +273,33 @@ export default function SiteEditorPage() {
     }
   };
 
+  // Called by parent for style-only changes (fontSize, textAlign, color on element).
+  // Applies style inline and sends PIXEL_TEXT_CHANGE so localPages stays in sync.
+  window._pixelApplyStyle = function(prop, value) {
+    if (!_editingEl) return;
+    _editingEl.style[prop] = value;
+    var newHtml = cleanHtml(_editingEl);
+    if (newHtml !== _editingOrigHtml) {
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:_editingOrigHtml, newHtml:newHtml, needsRebuild:false }, '*');
+      _editingOrigHtml = newHtml;
+    }
+  };
+
+  // Sync _editingOrigHtml with current element state WITHOUT ending the editing session.
+  window._pixelSyncEdit = function() {
+    if (!_editingEl) return;
+    var newHtml = cleanHtml(_editingEl);
+    if (newHtml !== _editingOrigHtml) {
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:_editingOrigHtml, newHtml:newHtml, needsRebuild:false }, '*');
+      _editingOrigHtml = newHtml;
+    }
+  };
+
+  // Called by parent before deploying to ensure any in-progress edit is saved to localPages.
+  window._pixelSaveEdit = function() {
+    if (_editingEl) saveCurrentEdit();
+  };
+
   function saveCurrentEdit() {
     if (!_editingEl) return;
     var el = _editingEl, orig = _editingOrigHtml;
@@ -607,6 +634,10 @@ export default function SiteEditorPage() {
 
   async function deployLocalHtml() {
     if (!localHtml || !isDirty) return;
+    // Flush any in-progress text edit so localPages has the latest content
+    const iframeWin = iframeRef.current?.contentWindow as any;
+    if (typeof iframeWin?._pixelSaveEdit === "function") iframeWin._pixelSaveEdit();
+    await new Promise(r => setTimeout(r, 80));
     setHtmlDeploying(true);
     try {
       const sha = await deployPage(currentPage);
@@ -620,6 +651,10 @@ export default function SiteEditorPage() {
 
   async function deployAllPages() {
     if (dirtyCount === 0) return;
+    // Flush any in-progress text edit first
+    const iframeWin = iframeRef.current?.contentWindow as any;
+    if (typeof iframeWin?._pixelSaveEdit === "function") iframeWin._pixelSaveEdit();
+    await new Promise(r => setTimeout(r, 80));
     setHtmlDeploying(true);
     let lastSha: string | null = null;
     try {

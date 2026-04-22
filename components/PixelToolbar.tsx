@@ -85,6 +85,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
     if (!doc) return;
     doc.execCommand('styleWithCSS', false, 'true');
     doc.execCommand(cmd, false, value ?? '');
+    // Sync change to localPages immediately
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelSyncEdit === "function") iframeWin._pixelSyncEdit();
   }
 
   // Sync font size from state
@@ -127,6 +130,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
     if (sel && !sel.isCollapsed) {
       doc.execCommand('styleWithCSS', false, 'true');
       doc.execCommand('foreColor', false, color);
+      // Sync change to localPages immediately
+      const iframeWin2 = getIframeWin() as any;
+      if (typeof iframeWin2?._pixelSyncEdit === "function") iframeWin2._pixelSyncEdit();
     } else {
       const el = getEditingEl();
       if (el) el.style.color = color;
@@ -136,15 +142,17 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
   }
 
   function applyAlign(align: string) {
-    // Style-only — no execCommand needed, no focus needed
-    const el = getEditingEl();
-    if (el) el.style.textAlign = align;
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelApplyStyle === "function") {
+      iframeWin._pixelApplyStyle("textAlign", align);
+    }
   }
 
   function applyFontSize(size: number) {
-    // Style-only — no execCommand needed, no focus needed
-    const el = getEditingEl();
-    if (el) el.style.fontSize = size + 'px';
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelApplyStyle === "function") {
+      iframeWin._pixelApplyStyle("fontSize", size + "px");
+    }
   }
 
   function clearFormatting() {
@@ -162,6 +170,9 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
     try { el.normalize(); } catch { /* noop */ }
     el.style.fontSize = ''; el.style.fontFamily = '';
     el.style.textAlign = ''; el.style.color = '';
+    // After clearing all styles, sync the change to localPages
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelSyncEdit === "function") iframeWin._pixelSyncEdit();
   }
 
   function handleFontSelect(family: string, linkHref: string) {
