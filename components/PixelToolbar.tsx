@@ -15,6 +15,8 @@ export interface SelectionState {
   hasSelection: boolean;
   elementTag: string;
   elementRect: { top: number; left: number; bottom: number; right: number };
+  isLink: boolean;
+  linkHref: string;
 }
 
 interface PixelToolbarProps {
@@ -36,11 +38,14 @@ const TOOLBAR_HEIGHT = 44;
 export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelect }: PixelToolbarProps) {
   const [showColorPanel, setShowColorPanel] = useState(false);
   const [showFontPicker, setShowFontPicker] = useState(false);
+  const [showLinkPanel, setShowLinkPanel] = useState(false);
+  const [linkValue, setLinkValue] = useState("");
   const [currentFont, setCurrentFont] = useState<string | undefined>();
   const [colorHex, setColorHex] = useState("#000000");
   const [fontSize, setFontSize] = useState<string>("");
   const toolbarRef = useRef<HTMLDivElement>(null);
   const colorPanelRef = useRef<HTMLDivElement>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
   const aaButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -95,9 +100,14 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
     if (state) setFontSize(String(state.fontSize || ""));
   }, [state?.fontSize]);
 
+  // Sync link href into input when state changes
+  useEffect(() => {
+    if (state?.isLink) setLinkValue(state.linkHref);
+  }, [state?.isLink, state?.linkHref]);
+
   // Close panels when editing ends
   useEffect(() => {
-    if (!state) { setShowColorPanel(false); setShowFontPicker(false); }
+    if (!state) { setShowColorPanel(false); setShowFontPicker(false); setShowLinkPanel(false); }
   }, [state]);
 
   // Close color panel on click outside
@@ -153,6 +163,15 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
     if (typeof iframeWin?._pixelApplyStyle === "function") {
       iframeWin._pixelApplyStyle("fontSize", size + "px");
     }
+  }
+
+  function applyLink(href: string) {
+    const iframeWin = getIframeWin() as any;
+    if (typeof iframeWin?._pixelSetLink === "function") {
+      iframeWin._pixelSetLink(href);
+    }
+    setShowLinkPanel(false);
+    if (!href) setLinkValue("");
   }
 
   function clearFormatting() {
@@ -238,6 +257,67 @@ export default function PixelToolbar({ state, iframeRef, iframeRect, onFontSelec
       <button className={btnClass(state.strikethrough)} onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }} onClick={() => execCmd("strikeThrough")}>
         <s>S</s>
       </button>
+
+      {/* Link button + inline panel */}
+      <div className="relative inline-flex">
+        <button
+          className={btnClass(state.isLink || showLinkPanel)}
+          title="Edit link"
+          onMouseDown={(e) => { e.preventDefault(); saveIframeSelection(); }}
+          onClick={() => {
+            if (!showLinkPanel) setLinkValue(state.linkHref || "");
+            setShowLinkPanel(p => !p);
+            setShowColorPanel(false);
+            setShowFontPicker(false);
+            setTimeout(() => linkInputRef.current?.select(), 40);
+          }}
+        >
+          {/* chain link SVG */}
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style={{ display: "inline", verticalAlign: "middle" }}>
+            <path d="M6.35 9.65a3.5 3.5 0 0 0 4.95 0l2-2a3.5 3.5 0 0 0-4.95-4.95l-1.1 1.1a.5.5 0 0 0 .7.7l1.1-1.1a2.5 2.5 0 0 1 3.54 3.54l-2 2a2.5 2.5 0 0 1-3.54 0 .5.5 0 0 0-.7.7Z"/>
+            <path d="M9.65 6.35a3.5 3.5 0 0 0-4.95 0l-2 2a3.5 3.5 0 0 0 4.95 4.95l1.1-1.1a.5.5 0 0 0-.7-.7l-1.1 1.1a2.5 2.5 0 0 1-3.54-3.54l2-2a2.5 2.5 0 0 1 3.54 0 .5.5 0 0 0 .7-.7Z"/>
+          </svg>
+        </button>
+        {showLinkPanel && (
+          <div
+            data-pixel-popover="1"
+            style={{ position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)" }}
+            className="bg-white rounded-[10px] p-[10px] shadow-[0_8px_28px_rgba(0,0,0,0.22)] z-[1] w-[260px]"
+          >
+            <div className="text-[10px] text-gray-400 font-medium mb-1.5">URL</div>
+            <input
+              ref={linkInputRef}
+              type="text"
+              value={linkValue}
+              onChange={e => setLinkValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") { e.preventDefault(); applyLink(linkValue.trim()); }
+                if (e.key === "Escape") setShowLinkPanel(false);
+              }}
+              placeholder="https://..."
+              className="w-full bg-[#f9fafb] border border-[#e5e7eb] rounded-[5px] text-[#374151] text-[12px] px-[8px] py-[5px] outline-none focus:border-[#2a7c6f] mb-2"
+            />
+            <div className="flex gap-2">
+              <button
+                className="flex-1 bg-[#2a7c6f] text-white border-none rounded-[6px] text-[11px] font-semibold px-3 py-[5px] cursor-pointer hover:bg-[#1e3530]"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => applyLink(linkValue.trim())}
+              >
+                Apply
+              </button>
+              {state.isLink && (
+                <button
+                  className="text-[11px] text-red-500 px-3 py-[5px] rounded-[6px] hover:bg-red-50 cursor-pointer border-none bg-transparent"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => applyLink("")}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="w-px h-4 bg-[#374151] mx-[3px] shrink-0" />
 

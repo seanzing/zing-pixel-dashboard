@@ -115,9 +115,7 @@ export default function SiteEditorPage() {
   const imgReplaceInputRef = useRef<HTMLInputElement>(null);
 
   // Link edit popover state
-  const [linkEdit, setLinkEdit] = useState<{ href: string; text: string; rect: { top: number; left: number; bottom: number; right: number; width: number } } | null>(null);
-  const [linkEditValue, setLinkEditValue] = useState("");
-  const linkEditRef = useRef<HTMLInputElement>(null);
+
 
   // Section context-menu state
   const [sectionHover] = [null]; // unused — kept for any remaining references
@@ -250,7 +248,9 @@ export default function SiteEditorPage() {
       })(),
       hasSelection: !!hasSelection,
       elementTag: _editingEl.tagName.toLowerCase(),
-      elementRect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right }
+      elementRect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right },
+      isLink: !!(sel && sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a[href]')),
+      linkHref: (function() { var a = sel && sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a[href]'); return a ? a.getAttribute('href') || '' : ''; })()
     }, '*');
   }
 
@@ -309,17 +309,40 @@ export default function SiteEditorPage() {
     if (_editingEl) saveCurrentEdit();
   };
 
-  // Called by parent when user saves a new URL for the currently-selected link.
-  window._pixelSetLinkHref = function(newHref) {
-    var anchor = window._pendingLinkEl;
-    if (!anchor) return;
-    var origHtml = anchor.outerHTML;
-    anchor.setAttribute('href', newHref);
-    var newHtml = anchor.outerHTML;
-    if (newHtml !== origHtml) {
-      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origHtml, newHtml:newHtml, needsRebuild:false }, '*');
+  // Add, edit, or remove a link within the active text editing session.
+  // href = '' removes the link; non-empty href adds or updates it.
+  window._pixelSetLink = function(href) {
+    if (!_editingEl) return;
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    var existingAnchor = sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a[href]');
+    var orig = _editingOrigHtml;
+    if (!href) {
+      // Remove link — unwrap the <a> tag
+      if (existingAnchor) {
+        var parent = existingAnchor.parentNode;
+        while (existingAnchor.firstChild) parent.insertBefore(existingAnchor.firstChild, existingAnchor);
+        parent.removeChild(existingAnchor);
+      }
+    } else if (existingAnchor) {
+      // Update existing link href
+      existingAnchor.setAttribute('href', href);
+    } else if (!sel.isCollapsed) {
+      // Wrap selected text in a new <a>
+      var range = sel.getRangeAt(0);
+      var anchor = document.createElement('a');
+      anchor.href = href;
+      try { range.surroundContents(anchor); }
+      catch(e) { anchor.appendChild(range.extractContents()); range.insertNode(anchor); }
     }
-    window._pendingLinkEl = null;
+    // Sync to localPages via PIXEL_TEXT_CHANGE
+    var newHtml = cleanHtml(_editingEl);
+    if (newHtml !== orig) {
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:orig, newHtml:newHtml, needsRebuild:false }, '*');
+      _editingOrigHtml = newHtml;
+    }
+    // Re-send selection state so toolbar isLink updates
+    sendSelectionState();
   };
 
   // Called by parent to hide or show the pending section.
@@ -479,21 +502,7 @@ export default function SiteEditorPage() {
       makeTextEditable(el, tIdx++);
     });
 
-    // ─── Link Click Detection ─────────────────────────────────────────────────
-    document.querySelectorAll('a[href]').forEach(function(anchor) {
-      anchor.addEventListener('click', function(e) {
-        if (_editingEl) return;
-        e.preventDefault(); e.stopPropagation();
-        var rect = anchor.getBoundingClientRect();
-        window.parent.postMessage({
-          type: 'PIXEL_LINK_CLICK',
-          href: anchor.getAttribute('href') || '',
-          text: anchor.textContent.trim().slice(0, 60),
-          rect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right, width: rect.width }
-        }, '*');
-        window._pendingLinkEl = anchor;
-      });
-    });
+
 
     // ─── Section Toggle ───────────────────────────────────────────────────────
     var _hoveredSection = null;
@@ -766,16 +775,6 @@ export default function SiteEditorPage() {
     } finally {
       setHtmlDeploying(false);
     }
-  }
-
-  function saveLinkEdit() {
-    if (!linkEdit) return;
-    const iframeWin = iframeRef.current?.contentWindow as any;
-    if (typeof iframeWin?._pixelSetLinkHref === "function") {
-      iframeWin._pixelSetLinkHref(linkEditValue.trim());
-    }
-    setDirtyPages(d => new Set([...d, currentPage]));
-    setLinkEdit(null);
   }
 
   function toggleSection(hide: boolean) {
@@ -1306,10 +1305,6 @@ export default function SiteEditorPage() {
           if (needsRebuild) pendingRebuildRef.current = true;
           return { ...prev, [currentPage]: updated };
         });
-      } else if (e.data?.type === "PIXEL_LINK_CLICK") {
-        setLinkEdit({ href: e.data.href, text: e.data.text, rect: e.data.rect });
-        setLinkEditValue(e.data.href);
-        setTimeout(() => linkEditRef.current?.select(), 50);
       } else if (e.data?.type === "PIXEL_SECTION_CLICK") {
         setSectionAction({
           isHidden: e.data.isHidden,
@@ -1328,7 +1323,6 @@ export default function SiteEditorPage() {
     function onPointerDown(e: PointerEvent) {
       const t = e.target as HTMLElement;
       if (!t.closest("[data-pixel-popover]")) {
-        setLinkEdit(null);
         setSectionAction(null);
       }
     }
@@ -1988,7 +1982,6 @@ export default function SiteEditorPage() {
                   setSeoData(null);
                   setImgList([]);
                   setChatMessages([]);
-                  setLinkEdit(null);
                   setSectionAction(null);
                 }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors group ${
@@ -2292,96 +2285,42 @@ export default function SiteEditorPage() {
                     )}
 
                     {/* Link edit popover */}
-                    {linkEdit && iframeRect && (
-                      <div
-                        data-pixel-popover="1"
-                        style={{
-                          position: 'fixed',
-                          top: iframeRect.top + linkEdit.rect.bottom + 8,
-                          left: Math.min(
-                            iframeRect.left + linkEdit.rect.left,
-                            window.innerWidth - 340
-                          ),
-                          zIndex: 2147483646,
-                          background: 'white',
-                          borderRadius: 10,
-                          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-                          border: '1px solid #e5e7eb',
-                          padding: '12px 14px',
-                          width: 320,
-                        }}
-                      >
-                        <div className="text-[11px] text-gray-400 mb-1.5 font-medium truncate">
-                          {linkEdit.text || "Link"}
-                        </div>
-                        <input
-                          ref={linkEditRef}
-                          value={linkEditValue}
-                          onChange={e => setLinkEditValue(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") { e.preventDefault(); saveLinkEdit(); }
-                            if (e.key === "Escape") setLinkEdit(null);
-                          }}
-                          placeholder="https://..."
-                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-zing-teal mb-2"
-                          autoFocus
-                        />
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={() => setLinkEdit(null)}
-                            className="text-xs text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={saveLinkEdit}
-                            className="text-xs bg-zing-teal text-white px-3 py-1.5 rounded-lg hover:bg-teal-700"
-                          >
-                            Save Link
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Section right-click context menu */}
+                    {/* Right-click context menu */}
                     {sectionAction && (
                       <div
                         data-pixel-popover="1"
                         style={{
                           position: 'fixed',
-                          top: Math.min(sectionAction.mouseY, window.innerHeight - 140),
-                          left: Math.min(sectionAction.mouseX, window.innerWidth - 220),
+                          top: Math.min(sectionAction.mouseY, window.innerHeight - 120),
+                          left: Math.min(sectionAction.mouseX, window.innerWidth - 200),
                           zIndex: 2147483645,
                           background: 'white',
-                          borderRadius: 10,
-                          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+                          borderRadius: 8,
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.14)',
                           border: '1px solid #e5e7eb',
-                          padding: '6px',
-                          minWidth: 200,
+                          padding: '4px',
+                          minWidth: 180,
                         }}
                       >
-                        <div className="text-[10px] text-gray-400 font-medium px-3 py-1.5">
-                          Section{sectionAction.sectionClass ? `: .${sectionAction.sectionClass.split(' ')[0]}` : ''}
-                        </div>
-                        <div className="w-full h-px bg-gray-100 mb-1" />
                         {sectionAction.isHidden ? (
                           <button
                             onClick={() => toggleSection(false)}
-                            className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-teal-50 text-teal-700 font-medium"
+                            className="w-full text-[12px] text-left px-3 py-2 rounded hover:bg-gray-50 text-gray-700"
                           >
-                            👁 Show this section
+                            Show section
                           </button>
                         ) : (
                           <button
                             onClick={() => toggleSection(true)}
-                            className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 font-medium"
+                            className="w-full text-[12px] text-left px-3 py-2 rounded hover:bg-gray-50 text-gray-700"
                           >
-                            🙈 Hide this section
+                            Hide section
                           </button>
                         )}
+                        <div className="w-full h-px bg-gray-100 my-1" />
                         <button
                           onClick={() => setSectionAction(null)}
-                          className="w-full text-xs text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-400"
+                          className="w-full text-[12px] text-left px-3 py-2 rounded hover:bg-gray-50 text-gray-400"
                         >
                           Cancel
                         </button>
