@@ -6,19 +6,20 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     if (!WORKER_URL) {
-      return NextResponse.json({ error: "MIGRATION_WORKER_URL not set", jobs: [] }, { status: 500 });
+      return NextResponse.json({ _debug: "MIGRATION_WORKER_URL not set" }, { status: 500 });
     }
     const res = await workerFetch("/jobs");
     const text = await res.text();
     if (!res.ok) {
-      return NextResponse.json({ error: `Worker ${res.status}: ${text}`, jobs: [] }, { status: res.status });
+      return NextResponse.json({ _debug: `Worker ${res.status}`, _body: text, _url: WORKER_URL }, { status: res.status });
     }
     const data = JSON.parse(text);
-    return NextResponse.json(data, {
+    // If worker returned empty but health shows jobs, surface the raw text for debugging
+    return NextResponse.json({ _debug: { workerUrl: WORKER_URL, status: res.status, rawLength: text.length }, data }, {
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg, jobs: [] }, { status: 500 });
+    return NextResponse.json({ _debug: "catch", error: msg, _url: WORKER_URL }, { status: 500 });
   }
 }
