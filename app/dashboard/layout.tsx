@@ -83,6 +83,15 @@ export default function DashboardLayout({
                 </svg>
                 Import
               </Link>
+              <Link
+                href="/dashboard/migrate"
+                className="flex items-center gap-2.5 px-3 py-2 rounded text-sm hover:bg-white/10 transition-colors text-white/70 hover:text-white"
+              >
+                <svg className="w-3.5 h-3.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                </svg>
+                Migrate
+              </Link>
               <div className="border-t border-white/10 my-2" />
               <Link
                 href="/dashboard/health"
@@ -117,6 +126,11 @@ export default function DashboardLayout({
             <Link href="/dashboard/import" className="p-2 rounded hover:bg-white/10 transition-colors" title="Import">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+            </Link>
+            <Link href="/dashboard/migrate" className="p-2 rounded hover:bg-white/10 transition-colors" title="Migrate">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
               </svg>
             </Link>
             <div className="w-5 border-t border-white/10" />
