@@ -14,7 +14,9 @@ export async function GET() {
       return NextResponse.json({ error: `Worker ${res.status}: ${text}`, jobs: [] }, { status: res.status });
     }
     const data = JSON.parse(text);
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg, jobs: [] }, { status: 500 });
