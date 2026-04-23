@@ -10,13 +10,14 @@ export async function GET() {
   try {
     const res = await workerFetch("/jobs");
     if (!res.ok) {
-      return NextResponse.json([], { status: 200 });
+      const text = await res.text().catch(() => "");
+      return NextResponse.json({ _debug: true, workerStatus: res.status, body: text, workerUrl: WORKER_URL }, { status: 200 });
     }
     const data = await res.json();
     return NextResponse.json(Array.isArray(data) ? data : [], {
       headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     });
-  } catch {
-    return NextResponse.json([], { status: 200 });
+  } catch (err: any) {
+    return NextResponse.json({ _debug: true, error: err?.message || String(err), workerUrl: WORKER_URL }, { status: 200 });
   }
 }
