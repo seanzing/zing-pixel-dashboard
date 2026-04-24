@@ -13,7 +13,15 @@ interface Job {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
-  result: { pagesWritten: number; assetsDownloaded: number; siteId: string } | null;
+  result: { pagesWritten: number; assetsDownloaded: number; siteId: string; previewUrl?: string } | null;
+}
+
+interface HistorySite {
+  id: string;
+  business_name: string;
+  status: string;
+  preview_url: string;
+  created_at: string;
 }
 
 function slugFromUrl(url: string): string {
@@ -54,6 +62,10 @@ export default function MigratePage() {
   const [jobLogs, setJobLogs] = useState<Record<string, string[]>>({});
   const [submitting, setSubmitting] = useState(false);
   const activeStreams = useRef<Set<string>>(new Set());
+
+  // Past migrations from Supabase (survives worker restarts)
+  const [history, setHistory] = useState<HistorySite[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
   // Auto-slug from URL
   useEffect(() => {
@@ -117,6 +129,25 @@ export default function MigratePage() {
     const interval = setInterval(fetchJobs, 3000);
     return () => clearInterval(interval);
   }, [fetchJobs]);
+
+  // Fetch migration history from Supabase
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch("/api/migrate/history");
+      if (res.ok) setHistory(await res.json());
+    } catch {}
+    finally { setHistoryLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Refresh history when a job finishes
+  useEffect(() => {
+    const hasDone = jobs.some(j => j.status === "done");
+    if (hasDone) fetchHistory();
+  }, [jobs, fetchHistory]);
 
   // Stream logs for running jobs
   useEffect(() => {
@@ -418,7 +449,7 @@ export default function MigratePage() {
           Job Queue
         </h2>
         {jobs.length === 0 && (
-          <p className="text-sm text-gray-500">No migration jobs yet.</p>
+          <p className="text-sm text-gray-500">No active jobs. Submit a URL above to start a migration. Completed migrations are shown below.</p>
         )}
         <div className="space-y-3">
           {jobs
@@ -478,6 +509,73 @@ export default function MigratePage() {
               </div>
             ))}
         </div>
+      </div>
+
+      {/* Past migrations — persisted in Supabase, survives worker restarts */}
+      <div className="mt-8">
+        <h2 className="text-lg font-semibold text-zing-dark mb-3">
+          Completed Migrations
+          <span className="ml-2 text-sm font-normal text-gray-400">(from Supabase — survives restarts)</span>
+        </h2>
+        {historyLoading && <p className="text-sm text-gray-400">Loading...</p>}
+        {!historyLoading && history.length === 0 && (
+          <p className="text-sm text-gray-500">No completed migrations yet.</p>
+        )}
+        {!historyLoading && history.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Site</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Status</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Preview</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Created</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {history.map((site) => (
+                  <tr key={site.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-zing-dark">{site.business_name || site.id}</div>
+                      <div className="text-xs text-gray-400 font-mono">{site.id}</div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        site.status === "live" ? "bg-green-100 text-green-800" :
+                        site.status === "draft" ? "bg-yellow-100 text-yellow-800" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>
+                        {site.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <a
+                        href={site.preview_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-zing-teal hover:underline truncate block max-w-xs"
+                      >
+                        {site.preview_url?.replace("https://", "")}
+                      </a>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-gray-500">
+                      {new Date(site.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <Link
+                        href={`/dashboard/sites/${site.id}`}
+                        className="px-3 py-1 text-xs font-medium text-zing-teal border border-zing-teal rounded hover:bg-zing-teal/5 transition-colors"
+                      >
+                        Open in Editor
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
