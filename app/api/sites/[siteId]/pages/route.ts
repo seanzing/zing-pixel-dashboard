@@ -45,28 +45,54 @@ function slugify(name: string): string {
   return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+type PageEntry = {
+  filename: string;
+  label: string;
+  isHome: boolean;
+  slug: string;
+  isNav: boolean; // true = in main nav; false = internal/subpage (only present for migrated sites)
+};
+
 // GET — list all pages: flat .html files + subdirectory index.html files (migration output)
 export async function GET(_req: NextRequest, { params }: { params: { siteId: string } }) {
-  const res = await fetch(`${GITHUB_API}/repos/${REPO}/contents/${params.siteId}`, { headers: ghHeaders() });
-  if (!res.ok) return NextResponse.json({ error: "Site not found" }, { status: 404 });
-  const entries: Array<{ name: string; type: string }> = await res.json();
+  const [rootRes, reportRes] = await Promise.all([
+    fetch(`${GITHUB_API}/repos/${REPO}/contents/${params.siteId}`, { headers: ghHeaders() }),
+    fetch(`${GITHUB_API}/repos/${REPO}/contents/${params.siteId}/_migrate-report.json`, { headers: ghHeaders() }),
+  ]);
+  if (!rootRes.ok) return NextResponse.json({ error: "Site not found" }, { status: 404 });
+  const entries: Array<{ name: string; type: string }> = await rootRes.json();
+
+  // Read navSlugs from migration report (if it exists)
+  let navSlugs: Set<string> | null = null;
+  if (reportRes.ok) {
+    try {
+      const reportData = await reportRes.json();
+      const raw = Buffer.from(reportData.content, "base64").toString("utf8");
+      const report = JSON.parse(raw);
+      if (Array.isArray(report.navSlugs)) navSlugs = new Set(report.navSlugs);
+    } catch { /* no report or malformed — treat all as nav */ }
+  }
 
   // 1. Flat .html files at root
-  const flatPages = entries
+  const flatPages: PageEntry[] = entries
     .filter(e => e.type === "file" && e.name.endsWith(".html"))
-    .map(e => ({
-      filename: e.name,
-      label: labelFromFilename(e.name),
-      isHome: e.name === "index.html",
-      slug: e.name === "index.html" ? "/" : `/${e.name.replace(/\.html$/, "")}/`,
-    }));
+    .map(e => {
+      const slug = e.name === "index.html" ? "/" : `/${e.name.replace(/\.html$/, "")}/`;
+      const dirSlug = slug.replace(/^\/|\/$/g, ""); // "" for home, "about" for /about/
+      return {
+        filename: e.name,
+        label: labelFromFilename(e.name),
+        isHome: e.name === "index.html",
+        slug,
+        isNav: navSlugs ? navSlugs.has(dirSlug) : true,
+      };
+    });
 
   // 2. Subdirectory index.html files (migration output: about/index.html, gallery/index.html, etc.)
   const subdirs = entries.filter(e => e.type === "dir" && !SKIP_DIRS.has(e.name));
-  const subdirPages: typeof flatPages = [];
+  const subdirPages: PageEntry[] = [];
 
   if (subdirs.length > 0) {
-    // Check subdirs in parallel (max 10 at a time)
     const batches: typeof subdirs[] = [];
     for (let i = 0; i < subdirs.length; i += 10) batches.push(subdirs.slice(i, i + 10));
 
@@ -82,13 +108,14 @@ export async function GET(_req: NextRequest, { params }: { params: { siteId: str
           label: labelFromFilename(`${dir.name}/index.html`),
           isHome: false,
           slug: `/${dir.name}/`,
+          isNav: navSlugs ? navSlugs.has(dir.name) : true,
         };
       }));
-      subdirPages.push(...results.filter(Boolean) as typeof flatPages);
+      subdirPages.push(...results.filter(Boolean) as PageEntry[]);
     }
   }
 
-  // Merge: prefer flat files over subdir files (avoid duplicates)
+  // Merge: prefer flat files, dedupe by slug
   const flatSlugs = new Set(flatPages.map(p => p.slug));
   const merged = [
     ...flatPages,
@@ -96,10 +123,13 @@ export async function GET(_req: NextRequest, { params }: { params: { siteId: str
   ].sort((a, b) => {
     if (a.isHome) return -1;
     if (b.isHome) return 1;
+    // Nav pages first, then subpages
+    if (a.isNav !== b.isNav) return a.isNav ? -1 : 1;
     return a.label.localeCompare(b.label);
   });
 
-  return NextResponse.json({ pages: merged });
+  const hasSubpages = merged.some(p => !p.isNav);
+  return NextResponse.json({ pages: merged, hasSubpages });
 }
 
 // POST — create a new page

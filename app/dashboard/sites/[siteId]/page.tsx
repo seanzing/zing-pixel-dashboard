@@ -122,8 +122,10 @@ export default function SiteEditorPage() {
   const [sectionAction, setSectionAction] = useState<{ isHidden: boolean; sectionClass: string; mouseX: number; mouseY: number } | null>(null);
 
   // Multi-page state
-  type PageEntry = { filename: string; label: string; isHome: boolean; slug: string };
+  type PageEntry = { filename: string; label: string; isHome: boolean; slug: string; isNav?: boolean };
   const [pages, setPages] = useState<PageEntry[]>([]);
+  const [hasSubpages, setHasSubpages] = useState(false);
+  const [showAllPages, setShowAllPages] = useState(false);
   const [currentPage, setCurrentPage] = useState("index.html");
 
   // Derived per-page aliases (after currentPage is declared)
@@ -832,6 +834,7 @@ export default function SiteEditorPage() {
       const res = await fetch(`/api/sites/${siteId}/pages`);
       const data = await res.json();
       if (data.pages) setPages(data.pages);
+      if (typeof data.hasSubpages === "boolean") setHasSubpages(data.hasSubpages);
     } catch { /* non-fatal */ }
   }
 
@@ -1982,7 +1985,7 @@ export default function SiteEditorPage() {
 
           {/* Page selector bar */}
           <div className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 border-b border-gray-200 overflow-x-auto shrink-0">
-            {pages.map((p) => (
+            {(showAllPages ? pages : pages.filter(p => p.isNav !== false)).map((p) => (
               <button
                 key={p.filename}
                 onClick={() => {
@@ -2021,6 +2024,16 @@ export default function SiteEditorPage() {
             >
               <span className="text-sm leading-none">+</span> New Page
             </button>
+            {/* Subpage toggle — only shown when site has non-nav pages (migrated sites) */}
+            {hasSubpages && (
+              <button
+                onClick={() => setShowAllPages(v => !v)}
+                className="ml-auto pl-2 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-gray-400 hover:text-gray-600 whitespace-nowrap border-l border-gray-200 shrink-0"
+                title={showAllPages ? "Hide internal subpages" : `Show all ${pages.length} pages including internal subpages`}
+              >
+                {showAllPages ? "Nav only" : `+${pages.filter(p => !p.isNav).length} more`}
+              </button>
+            )}
           </div>
 
           {/* Tab bar */}
