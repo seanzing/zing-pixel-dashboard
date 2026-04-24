@@ -31,9 +31,13 @@ async function putFile(path: string, content: string, message: string, sha?: str
   return res.json();
 }
 
+// Dirs to skip when scanning for subpages
+const SKIP_DIRS = new Set(["assets", "locations", "images", ".github"]);
+
 function labelFromFilename(filename: string): string {
   if (filename === "index.html") return "Home";
-  const base = filename.replace(/\.html$/, "");
+  // Handle "about/index.html" → use dir name "about"
+  const base = filename.replace(/\/index\.html$/, "").replace(/\.html$/, "");
   return base.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
@@ -41,27 +45,61 @@ function slugify(name: string): string {
   return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-// GET — list all .html pages in site root (excluding locations/ subdirs)
+// GET — list all pages: flat .html files + subdirectory index.html files (migration output)
 export async function GET(_req: NextRequest, { params }: { params: { siteId: string } }) {
   const res = await fetch(`${GITHUB_API}/repos/${REPO}/contents/${params.siteId}`, { headers: ghHeaders() });
   if (!res.ok) return NextResponse.json({ error: "Site not found" }, { status: 404 });
   const entries: Array<{ name: string; type: string }> = await res.json();
 
-  const pages = entries
+  // 1. Flat .html files at root
+  const flatPages = entries
     .filter(e => e.type === "file" && e.name.endsWith(".html"))
     .map(e => ({
       filename: e.name,
       label: labelFromFilename(e.name),
       isHome: e.name === "index.html",
       slug: e.name === "index.html" ? "/" : `/${e.name.replace(/\.html$/, "")}/`,
-    }))
-    .sort((a, b) => {
-      if (a.isHome) return -1;
-      if (b.isHome) return 1;
-      return a.label.localeCompare(b.label);
-    });
+    }));
 
-  return NextResponse.json({ pages });
+  // 2. Subdirectory index.html files (migration output: about/index.html, gallery/index.html, etc.)
+  const subdirs = entries.filter(e => e.type === "dir" && !SKIP_DIRS.has(e.name));
+  const subdirPages: typeof flatPages = [];
+
+  if (subdirs.length > 0) {
+    // Check subdirs in parallel (max 10 at a time)
+    const batches: typeof subdirs[] = [];
+    for (let i = 0; i < subdirs.length; i += 10) batches.push(subdirs.slice(i, i + 10));
+
+    for (const batch of batches) {
+      const results = await Promise.all(batch.map(async dir => {
+        const r = await fetch(`${GITHUB_API}/repos/${REPO}/contents/${params.siteId}/${dir.name}`, { headers: ghHeaders() });
+        if (!r.ok) return null;
+        const sub: Array<{ name: string; type: string }> = await r.json();
+        const hasIndex = sub.some(f => f.name === "index.html" && f.type === "file");
+        if (!hasIndex) return null;
+        return {
+          filename: `${dir.name}/index.html`,
+          label: labelFromFilename(`${dir.name}/index.html`),
+          isHome: false,
+          slug: `/${dir.name}/`,
+        };
+      }));
+      subdirPages.push(...results.filter(Boolean) as typeof flatPages);
+    }
+  }
+
+  // Merge: prefer flat files over subdir files (avoid duplicates)
+  const flatSlugs = new Set(flatPages.map(p => p.slug));
+  const merged = [
+    ...flatPages,
+    ...subdirPages.filter(p => !flatSlugs.has(p.slug)),
+  ].sort((a, b) => {
+    if (a.isHome) return -1;
+    if (b.isHome) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  return NextResponse.json({ pages: merged });
 }
 
 // POST — create a new page

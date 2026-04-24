@@ -867,7 +867,7 @@ export default function SiteEditorPage() {
 
   async function deletePage(filename: string) {
     if (!confirm(`Delete "${filename}"? This cannot be undone.`)) return;
-    await fetch(`/api/sites/${siteId}/pages/${filename}`, { method: "DELETE" });
+    await fetch(`/api/sites/${siteId}/pages/${filename.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" });
     await fetchPages();
     if (currentPage === filename) setCurrentPage("index.html");
   }
