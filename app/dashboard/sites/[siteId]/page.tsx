@@ -198,9 +198,12 @@ export default function SiteEditorPage() {
   const [removingDomain, setRemovingDomain] = useState(false);
   const domainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin
-  function buildBlobPreview(html: string, siteId: string, interactive = false): string {
-    const base = `<base href="https://${siteId}.pages.dev/">`;
+  // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin.
+  // For subdir pages (e.g. "about/index.html") base must point to that subdir,
+  // otherwise relative paths like "../assets/x.jpg" resolve incorrectly.
+  function buildBlobPreview(html: string, siteId: string, interactive = false, page = "index.html"): string {
+    const pageDir = page.includes("/") ? page.substring(0, page.lastIndexOf("/") + 1) : "";
+    const base = `<base href="https://${siteId}.pages.dev/${pageDir}">`;
     const interactionScript = interactive ? `
 <style>
   [data-pixel-el] { cursor: pointer !important; }
@@ -717,7 +720,7 @@ export default function SiteEditorPage() {
     }
     if (!html) return;
     revokeBlobUrl();
-    const preview = buildBlobPreview(html, siteId, true);
+    const preview = buildBlobPreview(html, siteId, true, currentPage);
     setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
     setPreviewKey((k) => k + 1);
   }
@@ -808,7 +811,7 @@ export default function SiteEditorPage() {
       clearPageHistory(currentPage);
       // Rebuild the blob preview with the updated HTML (interactive)
       revokeBlobUrl();
-      const preview = buildBlobPreview(data.html, siteId, true);
+      const preview = buildBlobPreview(data.html, siteId, true, currentPage);
       setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
       setPreviewKey((k) => k + 1);
       setImgReplaceSuccess(true);
@@ -1106,7 +1109,7 @@ export default function SiteEditorPage() {
     if (!html) return;
     pendingRebuildRef.current = false;
     revokeBlobUrl();
-    const preview = buildBlobPreview(html, siteId, true);
+    const preview = buildBlobPreview(html, siteId, true, currentPage);
     setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
     setPreviewKey(k => k + 1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1225,7 +1228,7 @@ export default function SiteEditorPage() {
         setLocalPages(prev => ({ ...prev, [currentPage]: restoreHtml }));
         setDirtyPages(prev => new Set([...prev, currentPage]));
         revokeBlobUrl();
-        const preview = buildBlobPreview(restoreHtml, siteId, true);
+        const preview = buildBlobPreview(restoreHtml, siteId, true, currentPage);
         setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
         setPreviewKey(k => k + 1);
         setRightTab("preview");
@@ -1240,7 +1243,7 @@ export default function SiteEditorPage() {
         setLocalPages(prev => ({ ...prev, [currentPage]: restoreHtml }));
         setDirtyPages(prev => new Set([...prev, currentPage]));
         revokeBlobUrl();
-        const preview = buildBlobPreview(restoreHtml, siteId, true);
+        const preview = buildBlobPreview(restoreHtml, siteId, true, currentPage);
         setBlobUrl(URL.createObjectURL(new Blob([preview], { type: "text/html" })));
         setPreviewKey(k => k + 1);
         setRightTab("preview");
@@ -1340,6 +1343,13 @@ export default function SiteEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
 
+  // Reload preview whenever the active page changes (blobUrl was cleared by the page picker click)
+  useEffect(() => {
+    if (!siteId || rightTab !== "preview") return;
+    loadInteractivePreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
@@ -1355,7 +1365,7 @@ export default function SiteEditorPage() {
     const data = await res.json();
     if (data.html) {
       revokeBlobUrl();
-      const preview = buildBlobPreview(data.html, siteId, true);
+      const preview = buildBlobPreview(data.html, siteId, true, currentPage);
       const blob = new Blob([preview], { type: "text/html" });
       setBlobUrl(URL.createObjectURL(blob));
       setRightTab("preview");
@@ -1414,7 +1424,7 @@ export default function SiteEditorPage() {
         markDirty(currentPage);
         // Update blob preview
         revokeBlobUrl();
-        const preview = buildBlobPreview(data.html, siteId, true);
+        const preview = buildBlobPreview(data.html, siteId, true, currentPage);
         const blob = new Blob([preview], { type: "text/html" });
         setBlobUrl(URL.createObjectURL(blob));
         setRightTab("preview");
@@ -2031,7 +2041,7 @@ export default function SiteEditorPage() {
                   setRightTab("preview");
                   setLocationPreview(null);
                   // Always load interactive blob preview for same-origin postMessage support
-                  if (!blobUrl) loadInteractivePreview();
+                  loadInteractivePreview();
                 }}
                 className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
                   rightTab === "preview"
