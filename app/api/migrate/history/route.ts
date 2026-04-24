@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabase
     .from("sites")
     .select("id, business_name, status, preview_url, created_at, updated_at")
-    .like("preview_url", "%.pages.dev%")
+    .or("status.eq.migrating,status.eq.migration-error,preview_url.like.%.pages.dev%")
     .order("created_at", { ascending: false })
     .limit(limit);
 
