@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFile, writeFile, StaleShaError } from "@/lib/github";
 import { createServiceRoleClient, createServerSupabaseClient } from "@/lib/supabase/server";
+import { cfPagesDeploy } from "@/lib/cf-pages-deploy";
 
 // POST — commit local HTML to GitHub and trigger Cloudflare Pages deploy
 export async function POST(req: NextRequest, { params }: { params: { siteId: string } }) {
@@ -56,6 +57,17 @@ export async function POST(req: NextRequest, { params }: { params: { siteId: str
     commit_sha: commitSha,
     commit_message: msg.slice(0, 255),
   }).then(() => {});
+
+  // Fire CF Pages direct deploy in the background (non-blocking).
+  // This runs in parallel with the GitHub Actions deploy triggered by the git commit.
+  // Whichever finishes first wins. CF direct deploy is typically 15-30s faster.
+  cfPagesDeploy(params.siteId, [{ page, content: html }]).then((result) => {
+    if (result.ok) {
+      console.log(`[cf-deploy] ${params.siteId}/${page} → ${result.url}`);
+    } else {
+      console.warn(`[cf-deploy] ${params.siteId}/${page} failed: ${result.error}`);
+    }
+  });
 
   return NextResponse.json({ ok: true, commitSha });
 }
