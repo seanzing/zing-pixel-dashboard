@@ -694,68 +694,113 @@ export default function SiteEditorPage() {
     } else if (d.type === 'PIXEL_CONVERT_LIST') {
       if (_editingEl) convertToList(d.listTag);
     } else if (d.type === 'PIXEL_WIDGET_MODE') {
+      // Clean up any existing overlay first
+      var existingOv = document.getElementById('zing-widget-overlay');
+      if (existingOv) existingOv.parentNode.removeChild(existingOv);
+
       if (d.on) {
+        // Collect major sections — exclude nav, tiny elements, and duplicates
         var widgetSels = ['body > section','body > div[class]','main > section','main > div[class]','[class*="section"]','[class*="hero"]','[class*="about"]','[class*="services"]','[class*="contact"]','[class*="footer"]','[class*="gallery"]','[class*="cta"]','[class*="testimonial"]'];
         var seen = [];
         var sections = [];
         document.querySelectorAll(widgetSels.join(',')).forEach(function(el) {
-          if (el.offsetHeight < 40 || el.tagName === 'NAV') return;
+          if (el.offsetHeight < 60) return;
+          if (el.tagName === 'NAV' || el.closest('nav')) return;
+          // Skip elements that are ancestors of already-found sections
+          var isParentOfExisting = sections.some(function(s) { return el.contains(s); });
+          if (isParentOfExisting) return;
           if (seen.indexOf(el) === -1) { seen.push(el); sections.push(el); }
         });
-        // Insert bars between sections, before first, and after last
-        for (var si = 0; si <= sections.length; si++) {
+
+        // Create a non-invasive overlay — does NOT touch the page DOM structure
+        var scrollH = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 2000);
+        var ov = document.createElement('div');
+        ov.id = 'zing-widget-overlay';
+        ov.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:'+scrollH+'px;z-index:9998;pointer-events:none;';
+        document.body.style.position = 'relative';
+        document.body.appendChild(ov);
+
+        function makeInsertBar(yCenter, targetSection, idx) {
           var bar = document.createElement('div');
-          bar.className = 'zing-insert-bar';
-          bar.style.cssText = 'position:relative;z-index:10000;cursor:pointer;background:#2a7c6f;opacity:0.5;transition:opacity 0.2s;height:4px;width:100%;';
-          bar.addEventListener('mouseenter', function() { this.style.opacity = '1'; });
-          bar.addEventListener('mouseleave', function() { this.style.opacity = '0.5'; });
-          (function(idx) {
-            var targetSection = idx > 0 ? sections[idx - 1] : null;
-            bar.addEventListener('click', function(e) {
-              e.preventDefault(); e.stopPropagation();
-              window._pendingInsertTarget = targetSection;
-              window.parent.postMessage({ type:'PIXEL_INSERT_REQUEST', afterSectionIndex:idx, afterSectionHtml:targetSection ? targetSection.outerHTML.slice(0,200) : '' }, '*');
-            });
-          })(si);
-          if (si === 0 && sections.length > 0) {
-            sections[0].parentNode.insertBefore(bar, sections[0]);
-          } else if (si < sections.length) {
-            sections[si].parentNode.insertBefore(bar, sections[si]);
-          } else if (sections.length > 0) {
-            var lastSec = sections[sections.length - 1];
-            if (lastSec.nextSibling) lastSec.parentNode.insertBefore(bar, lastSec.nextSibling);
-            else lastSec.parentNode.appendChild(bar);
-          }
+          // Large 48px hit-target, centered on the gap
+          bar.style.cssText = 'position:absolute;left:0;right:0;top:'+(yCenter-24)+'px;height:48px;pointer-events:all;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+
+          var line = document.createElement('div');
+          line.style.cssText = 'position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:3px;background:#2a7c6f;opacity:0;transition:opacity 0.15s;border-radius:2px;';
+
+          var btn = document.createElement('div');
+          btn.textContent = '+';
+          btn.style.cssText = 'background:#2a7c6f;color:white;border-radius:50%;width:32px;height:32px;font-size:22px;line-height:30px;text-align:center;font-weight:700;opacity:0;transition:opacity 0.15s;position:relative;z-index:1;box-shadow:0 2px 8px rgba(0,0,0,0.25);user-select:none;';
+
+          bar.appendChild(line);
+          bar.appendChild(btn);
+
+          bar.addEventListener('mouseenter', function() { line.style.opacity='1'; btn.style.opacity='1'; });
+          bar.addEventListener('mouseleave', function() { line.style.opacity='0'; btn.style.opacity='0'; });
+          bar.addEventListener('click', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            window._pendingInsertTarget = targetSection;
+            window.parent.postMessage({ type:'PIXEL_INSERT_REQUEST', afterSectionIndex:idx }, '*');
+          });
+          ov.appendChild(bar);
         }
-      } else {
-        document.querySelectorAll('.zing-insert-bar').forEach(function(b) { b.parentNode.removeChild(b); });
+
+        var scrollY = window.scrollY || window.pageYOffset || 0;
+
+        // Bar before first section
+        if (sections.length > 0) {
+          var r0 = sections[0].getBoundingClientRect();
+          makeInsertBar(r0.top + scrollY - 8, null, 0);
+        }
+
+        // Bars between sections + after last
+        for (var si = 0; si < sections.length; si++) {
+          var rA = sections[si].getBoundingClientRect();
+          var yAfter;
+          if (si < sections.length - 1) {
+            var rB = sections[si+1].getBoundingClientRect();
+            yAfter = ((rA.bottom + rB.top) / 2) + scrollY;
+          } else {
+            yAfter = rA.bottom + scrollY + 8;
+          }
+          makeInsertBar(yAfter, sections[si], si + 1);
+        }
       }
     } else if (d.type === 'PIXEL_DO_INSERT') {
+      // Always remove the overlay first so it doesn't interfere
+      var ovEl = document.getElementById('zing-widget-overlay');
+      if (ovEl) ovEl.parentNode.removeChild(ovEl);
+
       var target = window._pendingInsertTarget;
       var tmp = document.createElement('div');
       tmp.innerHTML = d.widgetHtml;
       var widget = tmp.firstElementChild;
       if (!widget) return;
-      if (target) {
-        var originalHtml = target.outerHTML;
+
+      // Capture the target's outerHTML BEFORE inserting
+      var insertOriginal = target ? target.outerHTML : null;
+      if (target && target.parentNode) {
         target.parentNode.insertBefore(widget, target.nextSibling);
-        var newHtml = originalHtml + widget.outerHTML;
-        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:originalHtml, newHtml:newHtml, needsRebuild:false }, '*');
+        var insertNew = insertOriginal + widget.outerHTML;
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:insertOriginal, newHtml:insertNew, needsRebuild:false }, '*');
       } else {
         document.body.appendChild(widget);
         window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:'</body>', newHtml:widget.outerHTML+'</body>', needsRebuild:false }, '*');
       }
-      // Make widget elements interactive
+      // Wire up interactivity on the newly inserted widget
       var wIdx = document.querySelectorAll('[data-pixel-text]').length;
-      widget.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,button').forEach(function(el) {
-        if (el.textContent.trim()) makeTextEditable(el, wIdx++);
+      widget.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,button,[class*="btn"],[class*="cta"]').forEach(function(el) {
+        if (!el.textContent.trim() || el.hasAttribute('data-pixel-text')) return;
+        makeTextEditable(el, wIdx++);
       });
       var wiIdx = document.querySelectorAll('[data-pixel-el]').length;
       widget.querySelectorAll('img').forEach(function(img) {
-        var raw = img.getAttribute('src') || '';
-        makeImageClickable(img, wiIdx++, 'img', raw);
+        if (img.hasAttribute('data-pixel-el')) return;
+        makeImageClickable(img, wiIdx++, 'img', img.getAttribute('src') || '');
       });
       window._pendingInsertTarget = null;
+      // Scroll the new widget into view
+      try { widget.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(e) {}
     } else if (d.type === 'PIXEL_SET_LINK') {
       var linkEl = window._pendingLinkEl;
       if (!linkEl) return;
@@ -794,15 +839,30 @@ export default function SiteEditorPage() {
   }
 
   function buildWidgetHtml(type: string): string {
+    // Widgets are full-width sections so they fit naturally into the page flow
     switch (type) {
       case "text":
-        return '<div class="zing-widget zing-text-widget" style="max-width:800px;margin:40px auto;padding:20px 40px;"><p style="font-size:16px;line-height:1.7;color:#444;">Click to edit this text block.</p></div>';
+        return '<section class="zing-widget zing-text-widget" style="width:100%;padding:60px 40px;box-sizing:border-box;background:#fff;">' +
+          '<div style="max-width:900px;margin:0 auto;">' +
+          '<p style="font-size:17px;line-height:1.8;color:#444;margin:0;">Click to edit this text block.</p>' +
+          '</div></section>';
       case "heading":
-        return '<div class="zing-widget zing-heading-widget" style="max-width:800px;margin:40px auto;padding:20px 40px;text-align:center;"><h2 style="font-size:32px;font-weight:700;color:#222;margin:0;">Your Heading Here</h2></div>';
+        return '<section class="zing-widget zing-heading-widget" style="width:100%;padding:60px 40px;box-sizing:border-box;background:#fff;text-align:center;">' +
+          '<div style="max-width:900px;margin:0 auto;">' +
+          '<h2 style="font-size:36px;font-weight:700;color:#222;margin:0 0 16px 0;">Your Heading Here</h2>' +
+          '<p style="font-size:17px;line-height:1.7;color:#666;margin:0;">Supporting text goes here. Click to edit.</p>' +
+          '</div></section>';
       case "gallery":
-        return '<div class="zing-widget zing-gallery-widget" data-cols="3" style="max-width:1200px;margin:40px auto;padding:20px 40px;"><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;"><div class="zing-gallery-item"><img src="" alt="Gallery image 1" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div><div class="zing-gallery-item"><img src="" alt="Gallery image 2" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div><div class="zing-gallery-item"><img src="" alt="Gallery image 3" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div></div></div>';
+        return '<section class="zing-widget zing-gallery-widget" data-cols="3" style="width:100%;padding:60px 40px;box-sizing:border-box;background:#f9f9f9;">' +
+          '<div style="max-width:1200px;margin:0 auto;">' +
+          '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;">' +
+          '<div class="zing-gallery-item"><img src="" alt="Gallery image 1" style="width:100%;height:240px;object-fit:cover;border-radius:6px;display:block;background:#e5e7eb;"></div>' +
+          '<div class="zing-gallery-item"><img src="" alt="Gallery image 2" style="width:100%;height:240px;object-fit:cover;border-radius:6px;display:block;background:#e5e7eb;"></div>' +
+          '<div class="zing-gallery-item"><img src="" alt="Gallery image 3" style="width:100%;height:240px;object-fit:cover;border-radius:6px;display:block;background:#e5e7eb;"></div>' +
+          '</div></div></section>';
       case "divider":
-        return '<div class="zing-widget zing-divider-widget" style="margin:20px 0;padding:0 40px;"><hr style="border:none;border-top:2px solid #e5e7eb;margin:0;"></div>';
+        return '<div class="zing-widget zing-divider-widget" style="width:100%;padding:8px 40px;box-sizing:border-box;">' +
+          '<hr style="border:none;border-top:2px solid #e5e7eb;margin:0;"></div>';
       default:
         return "";
     }
