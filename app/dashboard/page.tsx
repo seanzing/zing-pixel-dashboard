@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface Site {
@@ -313,12 +313,15 @@ function AddSiteModal({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [htmlFile, setHtmlFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError("");
 
+    // Step 1: Create the site record + starter index.html in GitHub
     const res = await fetch("/api/sites", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -333,7 +336,34 @@ function AddSiteModal({
     }
 
     const data = await res.json();
-    onCreated(data.site.id);
+    const siteId = data.site.id;
+
+    // Step 2: If an HTML file was uploaded, overwrite the starter index.html
+    if (htmlFile) {
+      try {
+        const html = await htmlFile.text();
+        // Brief wait so GitHub has time to write the starter file (needed for SHA)
+        await new Promise(r => setTimeout(r, 1500));
+        const deployRes = await fetch(`/api/sites/${siteId}/deploy-html`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            html,
+            page: "index.html",
+            commitMessage: `init(${siteId}): upload HTML from file`,
+          }),
+        });
+        if (!deployRes.ok) {
+          const deployData = await deployRes.json();
+          // Non-fatal — site is created, HTML upload just failed
+          console.warn("HTML upload failed:", deployData.error);
+        }
+      } catch (err) {
+        console.warn("HTML upload error:", err);
+      }
+    }
+
+    onCreated(siteId);
   }
 
   return (
@@ -414,6 +444,43 @@ function AddSiteModal({
             />
           </div>
 
+          {/* HTML file upload — optional */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Upload HTML File <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".html,.htm"
+              className="hidden"
+              onChange={(e) => setHtmlFile(e.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full px-3 py-2 border-2 border-dashed border-gray-300 rounded-md text-sm text-gray-500 hover:border-zing-teal hover:text-zing-teal transition-colors text-left flex items-center gap-2"
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              {htmlFile ? (
+                <span className="text-zing-teal font-medium truncate">{htmlFile.name}</span>
+              ) : (
+                <span>Click to upload an HTML file from Claude Design or similar</span>
+              )}
+            </button>
+            {htmlFile && (
+              <button
+                type="button"
+                onClick={() => { setHtmlFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                className="mt-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
+              >
+                Remove file
+              </button>
+            )}
+          </div>
+
           {error && <p className="text-red-600 text-sm">{error}</p>}
 
           <div className="flex gap-2 pt-2">
@@ -429,7 +496,7 @@ function AddSiteModal({
               disabled={saving}
               className="flex-1 bg-zing-teal text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
             >
-              {saving ? "Creating..." : "Create Site"}
+              {saving ? (htmlFile ? "Uploading HTML…" : "Creating…") : "Create Site"}
             </button>
           </div>
         </form>
