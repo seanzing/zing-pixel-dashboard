@@ -699,17 +699,20 @@ export default function SiteEditorPage() {
       if (existingOv) existingOv.parentNode.removeChild(existingOv);
 
       if (d.on) {
-        // Collect major sections — exclude nav, tiny elements, and duplicates
+        // Collect major top-level sections only.
+        // Strategy: find all candidate elements, then keep only those that are
+        // NOT nested inside another candidate (dedupe to outermost elements only).
         var widgetSels = ['body > section','body > div[class]','main > section','main > div[class]','[class*="section"]','[class*="hero"]','[class*="about"]','[class*="services"]','[class*="contact"]','[class*="footer"]','[class*="gallery"]','[class*="cta"]','[class*="testimonial"]'];
-        var seen = [];
-        var sections = [];
+        var candidates = [];
+        var seenCandidates = [];
         document.querySelectorAll(widgetSels.join(',')).forEach(function(el) {
-          if (el.offsetHeight < 60) return;
+          if (el.offsetHeight < 80) return;
           if (el.tagName === 'NAV' || el.closest('nav')) return;
-          // Skip elements that are ancestors of already-found sections
-          var isParentOfExisting = sections.some(function(s) { return el.contains(s); });
-          if (isParentOfExisting) return;
-          if (seen.indexOf(el) === -1) { seen.push(el); sections.push(el); }
+          if (seenCandidates.indexOf(el) === -1) seenCandidates.push(el) && candidates.push(el);
+        });
+        // Keep only outermost: drop any element that has an ancestor in the candidate list
+        var sections = candidates.filter(function(el) {
+          return !candidates.some(function(other) { return other !== el && other.contains(el); });
         });
 
         // Create a non-invasive overlay — does NOT touch the page DOM structure
@@ -777,10 +780,39 @@ export default function SiteEditorPage() {
       var widget = tmp.firstElementChild;
       if (!widget) return;
 
-      // Capture the target's outerHTML BEFORE inserting
-      var insertOriginal = target ? target.outerHTML : null;
-      if (target && target.parentNode) {
-        target.parentNode.insertBefore(widget, target.nextSibling);
+      // Find the right container to insert into.
+      // Walk UP from the target element until we reach a container whose own parent
+      // is NOT a flex-row or grid (those would push our block widget sideways).
+      function findBlockContainer(el) {
+        if (!el) return { anchor: null, container: document.body };
+        var cur = el;
+        while (cur && cur.parentElement && cur.parentElement !== document.documentElement) {
+          var ps = window.getComputedStyle(cur.parentElement);
+          var isRowFlex = (ps.display === 'flex' || ps.display === 'inline-flex') &&
+                          ps.flexDirection !== 'column' && ps.flexDirection !== 'column-reverse';
+          var isGrid = (ps.display === 'grid' || ps.display === 'inline-grid');
+          if (!isRowFlex && !isGrid) {
+            // Parent is a block/column-flex — safe to insert here
+            return { anchor: cur, container: cur.parentElement };
+          }
+          cur = cur.parentElement;
+        }
+        // Fallback: insert directly in body
+        return { anchor: cur || el, container: document.body };
+      }
+
+      var insertInfo = findBlockContainer(target);
+      var insertAnchor = insertInfo.anchor;
+      var insertContainer = insertInfo.container;
+
+      // Capture original sibling HTML for undo tracking
+      var insertOriginal = insertAnchor ? insertAnchor.outerHTML : null;
+      if (insertAnchor && insertContainer) {
+        if (insertAnchor.nextSibling) {
+          insertContainer.insertBefore(widget, insertAnchor.nextSibling);
+        } else {
+          insertContainer.appendChild(widget);
+        }
         var insertNew = insertOriginal + widget.outerHTML;
         window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:insertOriginal, newHtml:insertNew, needsRebuild:false }, '*');
       } else {
