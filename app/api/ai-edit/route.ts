@@ -4,7 +4,7 @@ import { processAiEdit } from "@/lib/ai";
 import { getFile, StaleShaError } from "@/lib/github";
 
 export async function POST(request: Request) {
-  const { siteId, message, chatHistory, page = "index.html" } = await request.json();
+  const { siteId, message, chatHistory, page = "index.html", currentHtml: clientHtml } = await request.json();
 
   if (!siteId || !message) {
     return NextResponse.json(
@@ -13,15 +13,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const file = await getFile(`${siteId}/${page}`);
-  if (!file) {
-    return NextResponse.json(
-      { error: "Site files not found in GitHub" },
-      { status: 404 }
-    );
+  let currentHtml: string;
+  if (clientHtml) {
+    // Use the local (possibly edited) HTML from the client
+    currentHtml = clientHtml;
+  } else {
+    // Fallback: fetch from GitHub
+    const file = await getFile(`${siteId}/${page}`);
+    if (!file) {
+      return NextResponse.json(
+        { error: "Site files not found in GitHub" },
+        { status: 404 }
+      );
+    }
+    currentHtml = file.content;
   }
-
-  const currentHtml = file.content;
   const supabase = createServiceRoleClient();
   const userClient = createServerSupabaseClient();
   const { data: { user } } = await userClient.auth.getUser();

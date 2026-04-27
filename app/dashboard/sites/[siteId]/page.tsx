@@ -357,13 +357,26 @@ export default function SiteEditorPage() {
     var origHtml = section.outerHTML;
     if (hide) {
       section.dataset.pixelHidden = 'true';
-      section.style.display = 'none';
+      var newHtml = section.outerHTML;
+      // Apply visual placeholder styles directly to live DOM (not serialized)
+      section.style.display = 'block';
+      section.style.opacity = '0.3';
+      section.style.minHeight = '40px';
+      section.style.background = 'repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 10px,#e5e7eb 10px,#e5e7eb 20px)';
+      section.style.border = '2px dashed #9ca3af';
+      section.style.borderRadius = '4px';
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origHtml, newHtml:newHtml, needsRebuild:false }, '*');
     } else {
       delete section.dataset.pixelHidden;
       section.style.display = '';
+      section.style.opacity = '';
+      section.style.minHeight = '';
+      section.style.background = '';
+      section.style.border = '';
+      section.style.borderRadius = '';
+      var newHtml = section.outerHTML;
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origHtml, newHtml:newHtml, needsRebuild:false }, '*');
     }
-    var newHtml = section.outerHTML;
-    window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origHtml, newHtml:newHtml, needsRebuild:false }, '*');
     window._pendingSectionEl = null;
   };
 
@@ -465,9 +478,46 @@ export default function SiteEditorPage() {
   }
 
   // ─── Text Editable ────────────────────────────────────────────────────────
+  var _deleteBtn = null;
+  var _deleteBtnTarget = null;
+
+  function removeDeleteBtn() {
+    if (_deleteBtn && _deleteBtn.parentNode) _deleteBtn.parentNode.removeChild(_deleteBtn);
+    _deleteBtn = null; _deleteBtnTarget = null;
+  }
+
   function makeTextEditable(el, index) {
     var origHtml = el.outerHTML; // captured BEFORE data-pixel-text
     el.setAttribute('data-pixel-text', index);
+
+    el.addEventListener('mouseenter', function() {
+      if (el.isContentEditable) return;
+      removeDeleteBtn();
+      var rect = el.getBoundingClientRect();
+      var btn = document.createElement('div');
+      btn.textContent = '\\u00d7';
+      btn.style.cssText = 'position:fixed;top:' + rect.top + 'px;left:' + (rect.right - 20) + 'px;width:20px;height:20px;background:#ef4444;color:#fff;font-size:14px;line-height:20px;text-align:center;border-radius:50%;cursor:pointer;z-index:9999;user-select:none;';
+      document.body.appendChild(btn);
+      _deleteBtn = btn; _deleteBtnTarget = el;
+
+      btn.addEventListener('mouseenter', function() { /* keep visible */ });
+      btn.addEventListener('mouseleave', function() { removeDeleteBtn(); });
+      btn.addEventListener('click', function(e) {
+        e.preventDefault(); e.stopPropagation();
+        var orig = el.outerHTML;
+        el.parentNode.removeChild(el);
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:orig, newHtml:'', needsRebuild:false }, '*');
+        removeDeleteBtn();
+      });
+    });
+
+    el.addEventListener('mouseleave', function(e) {
+      if (_deleteBtn && e.relatedTarget === _deleteBtn) return;
+      setTimeout(function() {
+        if (_deleteBtnTarget === el) removeDeleteBtn();
+      }, 100);
+    });
+
     el.addEventListener('click', function(e) {
       if (e.target.closest('[data-pixel-el]')) return;
       e.stopPropagation();
@@ -508,6 +558,28 @@ export default function SiteEditorPage() {
     });
 
 
+
+    // ─── Empty Image Upload Prompts ──────────────────────────────────────────
+    document.querySelectorAll('img').forEach(function(img, i) {
+      var src = img.getAttribute('src') || '';
+      if (src && src !== '#' && src.length >= 5 && !src.startsWith('data:image/gif;base64,R0lGOD')) return;
+      img.style.position = 'relative';
+      var wrapper = img.parentNode;
+      if (wrapper) wrapper.style.position = 'relative';
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;min-height:60px;display:flex;align-items:center;justify-content:center;background:rgba(243,244,246,0.85);border:2px dashed #9ca3af;border-radius:4px;cursor:pointer;z-index:10;font-family:system-ui,sans-serif;font-size:14px;color:#6b7280;';
+      overlay.textContent = '\\ud83d\\udcf7 Click to upload image';
+      if (wrapper && wrapper !== document.body) {
+        wrapper.style.position = 'relative';
+        wrapper.insertBefore(overlay, img.nextSibling);
+      } else {
+        img.insertAdjacentElement('afterend', overlay);
+      }
+      overlay.addEventListener('click', function(e) {
+        e.preventDefault(); e.stopPropagation();
+        window.parent.postMessage({ type:'PIXEL_IMG_CLICK', index:i, kind:'img', rawSrc:'', resolvedSrc:'' }, '*');
+      });
+    });
 
     // ─── Section Toggle ───────────────────────────────────────────────────────
     var _hoveredSection = null;
@@ -1410,6 +1482,7 @@ export default function SiteEditorPage() {
         message,
         chatHistory: chatMessages,
         page: currentPage,
+        currentHtml: localPages[currentPage] ?? null,
       }),
     });
 

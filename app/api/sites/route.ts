@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { createPagesProject } from "@/lib/cloudflare";
+import { writeFile } from "@/lib/github";
 
 const SEED_SITE = {
   id: "mooreroofing",
@@ -79,6 +80,25 @@ export async function POST(request: Request) {
     await createPagesProject(id);
   } catch {
     // Non-critical — project may already exist
+  }
+
+  // Create starter index.html in GitHub
+  try {
+    const starterHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${business_name}</title>
+</head>
+<body>
+  <h1>${business_name}</h1>
+  <p>New site — start editing in Pixel.</p>
+</body>
+</html>`;
+    await writeFile(`${id}/index.html`, starterHtml, `init: create starter page for ${id}`);
+  } catch {
+    // Non-critical — folder may already exist
   }
 
   return NextResponse.json({ site });
