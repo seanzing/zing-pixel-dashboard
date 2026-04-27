@@ -121,6 +121,27 @@ export default function SiteEditorPage() {
   const [sectionHover] = [null]; // unused — kept for any remaining references
   const [sectionAction, setSectionAction] = useState<{ isHidden: boolean; sectionClass: string; mouseX: number; mouseY: number } | null>(null);
 
+  // Widget insertion state
+  const [widgetMode, setWidgetMode] = useState(false);
+  const [widgetPickerOpen, setWidgetPickerOpen] = useState(false);
+  const [widgetInsertInfo, setWidgetInsertInfo] = useState<{ afterSectionIndex: number; afterSectionHtml: string } | null>(null);
+
+  // Link destination picker state
+  const [linkDestOpen, setLinkDestOpen] = useState(false);
+  const [linkDestOrigHtml, setLinkDestOrigHtml] = useState("");
+  const [linkDestCurrentHref, setLinkDestCurrentHref] = useState("");
+  const [linkDestTab, setLinkDestTab] = useState<"page" | "anchor" | "external" | "contact">("page");
+  const [linkDestValue, setLinkDestValue] = useState("");
+  const [linkContactType, setLinkContactType] = useState<"tel" | "mailto">("tel");
+
+  // Image library state
+  const [libraryImages, setLibraryImages] = useState<Array<{ name: string; url: string; size: number }>>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryUploading, setLibraryUploading] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const libraryUploadRef = useRef<HTMLInputElement>(null);
+  const [libraryCopied, setLibraryCopied] = useState<string | null>(null);
+
   // Multi-page state
   type PageEntry = { filename: string; label: string; isHome: boolean; slug: string; isNav?: boolean };
   const [pages, setPages] = useState<PageEntry[]>([]);
@@ -546,6 +567,31 @@ export default function SiteEditorPage() {
       if (!m || !m[1] || m[1].startsWith('data:')) return;
       makeImageClickable(el, bgIdx++, 'bg', m[1]);
     });
+
+    // ─── Button/Link Destination Detection ──────────────────────────────────
+    var linkSels = ['a[href]','button','[class*="btn"]','[class*="cta"]','[class*="button"]'];
+    var linkEls = [];
+    linkSels.forEach(function(s) {
+      document.querySelectorAll(s).forEach(function(el) {
+        if (el.tagName === 'DIV' || el.tagName === 'SECTION') return;
+        if (el.querySelector('img') || !el.textContent.trim()) return;
+        if (linkEls.indexOf(el) === -1) linkEls.push(el);
+      });
+    });
+    linkEls.forEach(function(el) {
+      el.addEventListener('contextmenu', function(e) {
+        e.preventDefault(); e.stopPropagation();
+        var href = '';
+        if (el.tagName === 'A') href = el.getAttribute('href') || '';
+        else {
+          var closestA = el.closest('a[href]');
+          if (closestA) href = closestA.getAttribute('href') || '';
+        }
+        window._pendingLinkEl = el;
+        window.parent.postMessage({ type:'PIXEL_LINK_DEST_EDIT', originalHtml:el.outerHTML, currentHref:href, rect:{ top:el.getBoundingClientRect().top, left:el.getBoundingClientRect().left, width:el.getBoundingClientRect().width, height:el.getBoundingClientRect().height } }, '*');
+      });
+    });
+
     // Text
     var tIdx = 0;
     document.querySelectorAll('h1,h2,h3,h4,h5,h6,button,[class*="btn"],[class*="cta"]').forEach(function(el) {
@@ -647,6 +693,93 @@ export default function SiteEditorPage() {
       if (_editingEl) convertTag(d.tag);
     } else if (d.type === 'PIXEL_CONVERT_LIST') {
       if (_editingEl) convertToList(d.listTag);
+    } else if (d.type === 'PIXEL_WIDGET_MODE') {
+      if (d.on) {
+        var widgetSels = ['body > section','body > div[class]','main > section','main > div[class]','[class*="section"]','[class*="hero"]','[class*="about"]','[class*="services"]','[class*="contact"]','[class*="footer"]','[class*="gallery"]','[class*="cta"]','[class*="testimonial"]'];
+        var seen = [];
+        var sections = [];
+        document.querySelectorAll(widgetSels.join(',')).forEach(function(el) {
+          if (el.offsetHeight < 40 || el.tagName === 'NAV') return;
+          if (seen.indexOf(el) === -1) { seen.push(el); sections.push(el); }
+        });
+        // Insert bars between sections, before first, and after last
+        for (var si = 0; si <= sections.length; si++) {
+          var bar = document.createElement('div');
+          bar.className = 'zing-insert-bar';
+          bar.style.cssText = 'position:relative;z-index:10000;cursor:pointer;background:#2a7c6f;opacity:0.5;transition:opacity 0.2s;height:4px;width:100%;';
+          bar.addEventListener('mouseenter', function() { this.style.opacity = '1'; });
+          bar.addEventListener('mouseleave', function() { this.style.opacity = '0.5'; });
+          (function(idx) {
+            var targetSection = idx > 0 ? sections[idx - 1] : null;
+            bar.addEventListener('click', function(e) {
+              e.preventDefault(); e.stopPropagation();
+              window._pendingInsertTarget = targetSection;
+              window.parent.postMessage({ type:'PIXEL_INSERT_REQUEST', afterSectionIndex:idx, afterSectionHtml:targetSection ? targetSection.outerHTML.slice(0,200) : '' }, '*');
+            });
+          })(si);
+          if (si === 0 && sections.length > 0) {
+            sections[0].parentNode.insertBefore(bar, sections[0]);
+          } else if (si < sections.length) {
+            sections[si].parentNode.insertBefore(bar, sections[si]);
+          } else if (sections.length > 0) {
+            var lastSec = sections[sections.length - 1];
+            if (lastSec.nextSibling) lastSec.parentNode.insertBefore(bar, lastSec.nextSibling);
+            else lastSec.parentNode.appendChild(bar);
+          }
+        }
+      } else {
+        document.querySelectorAll('.zing-insert-bar').forEach(function(b) { b.parentNode.removeChild(b); });
+      }
+    } else if (d.type === 'PIXEL_DO_INSERT') {
+      var target = window._pendingInsertTarget;
+      var tmp = document.createElement('div');
+      tmp.innerHTML = d.widgetHtml;
+      var widget = tmp.firstElementChild;
+      if (!widget) return;
+      if (target) {
+        var originalHtml = target.outerHTML;
+        target.parentNode.insertBefore(widget, target.nextSibling);
+        var newHtml = originalHtml + widget.outerHTML;
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:originalHtml, newHtml:newHtml, needsRebuild:false }, '*');
+      } else {
+        document.body.appendChild(widget);
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:'</body>', newHtml:widget.outerHTML+'</body>', needsRebuild:false }, '*');
+      }
+      // Make widget elements interactive
+      var wIdx = document.querySelectorAll('[data-pixel-text]').length;
+      widget.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,button').forEach(function(el) {
+        if (el.textContent.trim()) makeTextEditable(el, wIdx++);
+      });
+      var wiIdx = document.querySelectorAll('[data-pixel-el]').length;
+      widget.querySelectorAll('img').forEach(function(img) {
+        var raw = img.getAttribute('src') || '';
+        makeImageClickable(img, wiIdx++, 'img', raw);
+      });
+      window._pendingInsertTarget = null;
+    } else if (d.type === 'PIXEL_SET_LINK') {
+      var linkEl = window._pendingLinkEl;
+      if (!linkEl) return;
+      var origH = linkEl.outerHTML;
+      if (linkEl.tagName === 'A') {
+        linkEl.setAttribute('href', d.href);
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origH, newHtml:linkEl.outerHTML, needsRebuild:false }, '*');
+      } else {
+        var aWrap = document.createElement('a');
+        aWrap.setAttribute('href', d.href);
+        linkEl.parentNode.insertBefore(aWrap, linkEl);
+        aWrap.appendChild(linkEl);
+        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origH, newHtml:aWrap.outerHTML, needsRebuild:false }, '*');
+      }
+      window._pendingLinkEl = null;
+    } else if (d.type === 'PIXEL_SET_IMAGE_URL') {
+      var imgEl = null;
+      if (d.kind === 'img') imgEl = document.querySelector('img[src="'+d.rawSrc+'"]');
+      else imgEl = document.querySelector('[style*="'+d.rawSrc+'"]');
+      if (!imgEl) return;
+      var origImg = imgEl.outerHTML;
+      if (d.kind === 'img') imgEl.setAttribute('src', d.newSrc);
+      else imgEl.style.backgroundImage = 'url('+d.newSrc+')';
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origImg, newHtml:imgEl.outerHTML, needsRebuild:false }, '*');
     }
   });
 
@@ -658,6 +791,71 @@ export default function SiteEditorPage() {
     return html.includes("<head>")
       ? html.replace("<head>", `<head>${inject}`)
       : inject + html;
+  }
+
+  function buildWidgetHtml(type: string): string {
+    switch (type) {
+      case "text":
+        return '<div class="zing-widget zing-text-widget" style="max-width:800px;margin:40px auto;padding:20px 40px;"><p style="font-size:16px;line-height:1.7;color:#444;">Click to edit this text block.</p></div>';
+      case "heading":
+        return '<div class="zing-widget zing-heading-widget" style="max-width:800px;margin:40px auto;padding:20px 40px;text-align:center;"><h2 style="font-size:32px;font-weight:700;color:#222;margin:0;">Your Heading Here</h2></div>';
+      case "gallery":
+        return '<div class="zing-widget zing-gallery-widget" data-cols="3" style="max-width:1200px;margin:40px auto;padding:20px 40px;"><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;"><div class="zing-gallery-item"><img src="" alt="Gallery image 1" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div><div class="zing-gallery-item"><img src="" alt="Gallery image 2" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div><div class="zing-gallery-item"><img src="" alt="Gallery image 3" style="width:100%;height:220px;object-fit:cover;border-radius:4px;display:block;"></div></div></div>';
+      case "divider":
+        return '<div class="zing-widget zing-divider-widget" style="margin:20px 0;padding:0 40px;"><hr style="border:none;border-top:2px solid #e5e7eb;margin:0;"></div>';
+      default:
+        return "";
+    }
+  }
+
+  function insertWidget(type: string) {
+    const html = buildWidgetHtml(type);
+    if (!html) return;
+    const iframeWin = iframeRef.current?.contentWindow;
+    if (iframeWin) {
+      iframeWin.postMessage({ type: "PIXEL_DO_INSERT", widgetHtml: html }, "*");
+    }
+    setWidgetPickerOpen(false);
+    setWidgetMode(false);
+    // Tell iframe to exit widget mode
+    if (iframeWin) {
+      iframeWin.postMessage({ type: "PIXEL_WIDGET_MODE", on: false }, "*");
+    }
+  }
+
+  async function fetchLibrary() {
+    setLibraryLoading(true);
+    try {
+      const res = await fetch(`/api/sites/${siteId}/library`);
+      if (res.ok) {
+        const data = await res.json();
+        setLibraryImages(data.images ?? []);
+      }
+    } catch { /* ignore */ } finally {
+      setLibraryLoading(false);
+    }
+  }
+
+  async function handleLibraryUpload(file: File) {
+    setLibraryUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/sites/${siteId}/library`, { method: "POST", body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        setLibraryImages(prev => [{ name: data.name, url: data.url, size: file.size }, ...prev]);
+      }
+    } catch { /* ignore */ } finally {
+      setLibraryUploading(false);
+    }
+  }
+
+  async function deleteLibraryImage(name: string) {
+    try {
+      await fetch(`/api/sites/${siteId}/library/${encodeURIComponent(name)}`, { method: "DELETE" });
+      setLibraryImages(prev => prev.filter(i => i.name !== name));
+    } catch { /* ignore */ }
   }
 
   function revokeBlobUrl() {
@@ -1390,6 +1588,26 @@ export default function SiteEditorPage() {
           mouseX: (iframeRect?.left ?? 0) + e.data.mouseX,
           mouseY: (iframeRect?.top ?? 0) + e.data.mouseY,
         });
+      } else if (e.data?.type === "PIXEL_INSERT_REQUEST") {
+        setWidgetInsertInfo({ afterSectionIndex: e.data.afterSectionIndex, afterSectionHtml: e.data.afterSectionHtml });
+        setWidgetPickerOpen(true);
+      } else if (e.data?.type === "PIXEL_LINK_DEST_EDIT") {
+        const href = e.data.currentHref || "";
+        setLinkDestOrigHtml(e.data.originalHtml);
+        setLinkDestCurrentHref(href);
+        setLinkDestValue(href);
+        // Auto-detect tab
+        if (href.startsWith("#")) setLinkDestTab("anchor");
+        else if (href.startsWith("tel:") || href.startsWith("mailto:")) {
+          setLinkDestTab("contact");
+          setLinkContactType(href.startsWith("tel:") ? "tel" : "mailto");
+          setLinkDestValue(href);
+        }
+        else if (href.startsWith("http")) setLinkDestTab("external");
+        else setLinkDestTab("page");
+        setLinkDestOpen(true);
+      } else if (e.data?.type === "PIXEL_SET_IMAGE_URL") {
+        setDirtyPages(d => new Set([...d, currentPage]));
       }
     }
     window.addEventListener("message", handler);
@@ -2047,6 +2265,77 @@ export default function SiteEditorPage() {
             </div>
           )}
 
+          {/* ── IMAGE LIBRARY (collapsible) ── */}
+          <div className="mt-4 border-t border-gray-200 pt-3">
+            <button
+              onClick={() => { const next = !showLibrary; setShowLibrary(next); if (next && libraryImages.length === 0 && !libraryLoading) fetchLibrary(); }}
+              className="flex items-center justify-between w-full text-sm font-semibold text-zing-dark mb-2"
+            >
+              <span>Image Library</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={(e) => { e.stopPropagation(); libraryUploadRef.current?.click(); }}
+                  className="text-gray-400 hover:text-zing-teal transition-colors p-0.5"
+                  title="Upload image"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                </button>
+                <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showLibrary ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </div>
+            </button>
+            <input ref={libraryUploadRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleLibraryUpload(f); e.target.value = ""; }} />
+
+            {showLibrary && (
+              <div>
+                {libraryLoading && <p className="text-xs text-gray-400 py-2">Loading...</p>}
+                {libraryUploading && <p className="text-xs text-zing-teal py-1">Uploading...</p>}
+                {libraryCopied && <p className="text-xs text-green-600 py-1">URL copied!</p>}
+
+                {!libraryLoading && libraryImages.length === 0 && (
+                  <div className="text-center py-6">
+                    <p className="text-xs text-gray-400 mb-2">No images yet</p>
+                    <button onClick={() => libraryUploadRef.current?.click()} className="text-xs bg-zing-teal text-white px-3 py-1.5 rounded hover:bg-zing-dark transition-colors">Upload</button>
+                  </div>
+                )}
+
+                {libraryImages.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {libraryImages.map(img => (
+                      <div key={img.name} className="relative group rounded-md overflow-hidden cursor-pointer" style={{ height: 80 }}>
+                        <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (selectedImg) {
+                                const iframeWin = iframeRef.current?.contentWindow;
+                                if (iframeWin) iframeWin.postMessage({ type: "PIXEL_SET_IMAGE_URL", rawSrc: selectedImg.rawSrc, kind: selectedImg.kind, newSrc: img.url }, "*");
+                              } else {
+                                navigator.clipboard.writeText(img.url);
+                                setLibraryCopied(img.name);
+                                setTimeout(() => setLibraryCopied(null), 2000);
+                              }
+                            }}
+                            title="Insert into page"
+                            className="bg-white/90 text-zing-dark rounded-full w-7 h-7 flex items-center justify-center hover:bg-white transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M12 4v16m0-16l-4 4m4-4l4 4" /></svg>
+                          </button>
+                          <button
+                            onClick={() => deleteLibraryImage(img.name)}
+                            title="Delete"
+                            className="bg-white/90 text-red-500 rounded-full w-7 h-7 flex items-center justify-center hover:bg-white transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           </div>{/* end scrollable content */}
         </div>{/* end left sidebar */}
 
@@ -2149,40 +2438,58 @@ export default function SiteEditorPage() {
               </button>
             </div>
 
-            {/* Device toggle — only when on Preview tab */}
+            {/* Device toggle + Add Widget — only when on Preview tab */}
             {rightTab === "preview" && (
-              <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
-                {(["desktop", "tablet", "mobile"] as const).map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => setDeviceView(d)}
-                    title={d.charAt(0).toUpperCase() + d.slice(1)}
-                    className={`px-2 py-1 rounded text-gray-500 transition-colors ${
-                      deviceView === d
-                        ? "bg-white shadow-sm text-zing-dark"
-                        : "hover:text-gray-700"
-                    }`}
-                  >
-                    {d === "desktop" && (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <rect x="2" y="3" width="20" height="14" rx="2" strokeWidth="2" strokeLinecap="round"/>
-                        <path d="M8 21h8M12 17v4" strokeWidth="2" strokeLinecap="round"/>
-                      </svg>
-                    )}
-                    {d === "tablet" && (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <rect x="4" y="2" width="16" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
-                        <circle cx="12" cy="18" r="1" fill="currentColor"/>
-                      </svg>
-                    )}
-                    {d === "mobile" && (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <rect x="7" y="2" width="10" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
-                        <circle cx="12" cy="18" r="1" fill="currentColor"/>
-                      </svg>
-                    )}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const next = !widgetMode;
+                    setWidgetMode(next);
+                    const iframeWin = iframeRef.current?.contentWindow;
+                    if (iframeWin) iframeWin.postMessage({ type: "PIXEL_WIDGET_MODE", on: next }, "*");
+                  }}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    widgetMode
+                      ? "bg-zing-teal text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  Add Widget
+                </button>
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5">
+                  {(["desktop", "tablet", "mobile"] as const).map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setDeviceView(d)}
+                      title={d.charAt(0).toUpperCase() + d.slice(1)}
+                      className={`px-2 py-1 rounded text-gray-500 transition-colors ${
+                        deviceView === d
+                          ? "bg-white shadow-sm text-zing-dark"
+                          : "hover:text-gray-700"
+                      }`}
+                    >
+                      {d === "desktop" && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <rect x="2" y="3" width="20" height="14" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                          <path d="M8 21h8M12 17v4" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                      )}
+                      {d === "tablet" && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <rect x="4" y="2" width="16" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                          <circle cx="12" cy="18" r="1" fill="currentColor"/>
+                        </svg>
+                      )}
+                      {d === "mobile" && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <rect x="7" y="2" width="10" height="20" rx="2" strokeWidth="2" strokeLinecap="round"/>
+                          <circle cx="12" cy="18" r="1" fill="currentColor"/>
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -3051,6 +3358,140 @@ export default function SiteEditorPage() {
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Widget picker modal */}
+      {widgetPickerOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setWidgetPickerOpen(false); setWidgetMode(false); const iw = iframeRef.current?.contentWindow; if (iw) iw.postMessage({ type: "PIXEL_WIDGET_MODE", on: false }, "*"); }}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-zing-dark mb-4">Add Widget</h3>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { type: "text", label: "Text Block", icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h10M4 18h14" /></svg> },
+                { type: "heading", label: "Heading", icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16" /><text x="8" y="20" fontSize="8" fill="currentColor" fontWeight="bold">H</text></svg> },
+                { type: "gallery", label: "Gallery", icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" strokeWidth={2} /><rect x="14" y="3" width="7" height="7" rx="1" strokeWidth={2} /><rect x="3" y="14" width="7" height="7" rx="1" strokeWidth={2} /><rect x="14" y="14" width="7" height="7" rx="1" strokeWidth={2} /></svg> },
+                { type: "divider", label: "Divider", icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M4 12h16" /></svg> },
+              ] as const).map((w) => (
+                <button
+                  key={w.type}
+                  onClick={() => insertWidget(w.type)}
+                  className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-200 hover:border-zing-teal hover:bg-zing-teal/5 transition-colors text-gray-600 hover:text-zing-teal"
+                >
+                  {w.icon}
+                  <span className="text-xs font-medium">{w.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link destination picker modal */}
+      {linkDestOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setLinkDestOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-zing-dark mb-4">Link Destination</h3>
+            <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1">
+              {(["page", "anchor", "external", "contact"] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => { setLinkDestTab(tab); setLinkDestValue(""); }}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${linkDestTab === tab ? "bg-white text-zing-teal shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  {tab === "page" ? "Page" : tab === "anchor" ? "Anchor" : tab === "external" ? "External" : "Contact"}
+                </button>
+              ))}
+            </div>
+
+            <div className="min-h-[160px] max-h-[240px] overflow-y-auto mb-4">
+              {linkDestTab === "page" && (
+                <div className="space-y-1">
+                  {pages.map(p => (
+                    <button
+                      key={p.filename}
+                      onClick={() => setLinkDestValue(p.isHome ? "/" : `/${p.slug}/`)}
+                      className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${linkDestValue === (p.isHome ? "/" : `/${p.slug}/`) ? "bg-zing-teal/10 text-zing-teal font-medium" : "hover:bg-gray-50 text-gray-700"}`}
+                    >
+                      {p.isHome ? "Home (/)" : `/${p.slug}/`}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {linkDestTab === "anchor" && (() => {
+                const anchors: string[] = [];
+                const html = localPages[currentPage] || "";
+                const re = /\sid="([^"]+)"/g;
+                let m: RegExpExecArray | null;
+                while ((m = re.exec(html)) !== null) anchors.push(m[1]);
+                return (
+                  <div className="space-y-1">
+                    {anchors.length === 0 && <p className="text-xs text-gray-400 py-4 text-center">No anchors found on this page.</p>}
+                    {anchors.map(id => (
+                      <button
+                        key={id}
+                        onClick={() => setLinkDestValue(`#${id}`)}
+                        className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${linkDestValue === `#${id}` ? "bg-zing-teal/10 text-zing-teal font-medium" : "hover:bg-gray-50 text-gray-700"}`}
+                      >
+                        #{id}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {linkDestTab === "external" && (
+                <div className="py-2">
+                  <input
+                    type="url"
+                    value={linkDestValue}
+                    onChange={e => setLinkDestValue(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                </div>
+              )}
+
+              {linkDestTab === "contact" && (
+                <div className="space-y-3 py-2">
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
+                      <input type="radio" checked={linkContactType === "tel"} onChange={() => { setLinkContactType("tel"); setLinkDestValue(""); }} className="accent-zing-teal" /> Phone
+                    </label>
+                    <label className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
+                      <input type="radio" checked={linkContactType === "mailto"} onChange={() => { setLinkContactType("mailto"); setLinkDestValue(""); }} className="accent-zing-teal" /> Email
+                    </label>
+                  </div>
+                  <input
+                    type={linkContactType === "tel" ? "tel" : "email"}
+                    value={linkDestValue.replace(/^(tel:|mailto:)/, "")}
+                    onChange={e => setLinkDestValue(`${linkContactType}:${e.target.value}`)}
+                    placeholder={linkContactType === "tel" ? "+1 (555) 123-4567" : "hello@example.com"}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={() => setLinkDestOpen(false)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+              <button
+                onClick={() => {
+                  const iframeWin = iframeRef.current?.contentWindow;
+                  if (iframeWin && linkDestValue) {
+                    iframeWin.postMessage({ type: "PIXEL_SET_LINK", originalHtml: linkDestOrigHtml, href: linkDestValue }, "*");
+                    setDirtyPages(d => new Set([...d, currentPage]));
+                  }
+                  setLinkDestOpen(false);
+                }}
+                disabled={!linkDestValue}
+                className="flex-1 bg-zing-teal text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
