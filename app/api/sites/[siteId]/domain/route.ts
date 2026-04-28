@@ -3,6 +3,14 @@ import { createServerSupabaseClient, createServiceRoleClient } from "@/lib/supab
 import { addCfPagesCustomDomain, getCfPagesCustomDomainStatus, removeCfPagesCustomDomain } from "@/lib/cloudflare";
 import { createEntriSession, getEntriSessionStatus } from "@/lib/entri";
 
+/** Supabase writes in this route must never block the response indefinitely */
+function withTimeout<T>(promise: Promise<T>, ms = 8000): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 function normalizeDomain(input: string): { apexDomain: string; wwwDomain: string } {
   let d = input.toLowerCase().trim();
   d = d.replace(/^https?:\/\//, "");
@@ -43,13 +51,13 @@ export async function POST(
     const cfResult = await addCfPagesCustomDomain(siteId, wwwDomain);
     cfStatus = cfResult.status;
 
-    // Fast-path: .zingsite.com domains go live immediately
-    if (apexDomain.endsWith(".zingsite.com")) {
-      await supabase.from("sites").update({
+    // Fast-path: .zingsite.com domains OR already-active CF domains go live immediately
+    if (apexDomain.endsWith(".zingsite.com") || cfResult.status === "active") {
+      await withTimeout(supabase.from("sites").update({
         live_url: `https://${wwwDomain}`,
         status: "live",
         updated_at: new Date().toISOString(),
-      }).eq("id", siteId);
+      }).eq("id", siteId));
       return NextResponse.json({
         type: "immediate",
         domain: wwwDomain,
@@ -62,9 +70,9 @@ export async function POST(
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  // Read current build_payload, merge new fields
-  const { data: site } = await supabase.from("sites").select("build_payload").eq("id", siteId).single();
-  const currentPayload = site?.build_payload ?? {};
+  // Read current build_payload, merge new fields (timeout: 8s — Supabase must not hang)
+  const siteResult = await withTimeout(supabase.from("sites").select("build_payload").eq("id", siteId).single());
+  const currentPayload = (siteResult as { data?: { build_payload?: Record<string, unknown> } } | null)?.data?.build_payload ?? {};
   const publishingFields = {
     publishing_domain: wwwDomain,
     publishing_apex: apexDomain,
@@ -79,10 +87,10 @@ export async function POST(
     ]);
 
     const updatedPayload = { ...currentPayload, ...publishingFields, entri_session_id: entriSession.sessionId };
-    await supabase.from("sites").update({
+    await withTimeout(supabase.from("sites").update({
       build_payload: updatedPayload,
       updated_at: new Date().toISOString(),
-    }).eq("id", siteId);
+    }).eq("id", siteId));
 
     return NextResponse.json({
       type: "entri",
@@ -95,10 +103,10 @@ export async function POST(
 
   // Manual mode
   const updatedPayload = { ...currentPayload, ...publishingFields };
-  await supabase.from("sites").update({
+  await withTimeout(supabase.from("sites").update({
     build_payload: updatedPayload,
     updated_at: new Date().toISOString(),
-  }).eq("id", siteId);
+  }).eq("id", siteId));
 
   const records = {
     www: {
