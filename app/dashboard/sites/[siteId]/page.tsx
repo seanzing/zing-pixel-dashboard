@@ -212,14 +212,29 @@ export default function SiteEditorPage() {
   const [locLog, setLocLog] = useState<Array<{ type: "progress" | "page" | "done" | "error"; text: string; status?: string }>>([]);
   const [locDone, setLocDone] = useState(false);
 
-  // Custom domain
+  // Custom domain / publishing flow
   const [domainInput, setDomainInput] = useState("");
-  const [domainStatus, setDomainStatus] = useState<"idle" | "adding" | "pending" | "active" | "error">("idle");
+  const [domainStatus, setDomainStatus] = useState<
+    "idle" | "adding" | "pending" | "pending_nameservers" | "active" | "error"
+  >("idle");
   const [domainError, setDomainError] = useState<string | null>(null);
   const [cnameTarget, setCnameTarget] = useState<string | null>(null);
   const [activeDomain, setActiveDomain] = useState<string | null>(null);
   const [removingDomain, setRemovingDomain] = useState(false);
   const domainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // New publishing flow state
+  const [domainType, setDomainType] = useState<"none" | "zing" | "custom">("none");
+  const [zoneNameservers, setZoneNameservers] = useState<string[]>([]);
+  const [importedRecords, setImportedRecords] = useState<Array<{
+    id: string; type: string; name: string; content: string; priority?: number; ttl: number; proxied?: boolean;
+  }>>([]);
+  const [apexDomain, setApexDomain] = useState<string | null>(null);
+  const [dnsExpanded, setDnsExpanded] = useState(false);
+  const [registrarExpanded, setRegistrarExpanded] = useState(false);
+  const [expandedRegistrar, setExpandedRegistrar] = useState<string | null>(null);
+  const [instructionsSent, setInstructionsSent] = useState(false);
+  const [sendingInstructions, setSendingInstructions] = useState(false);
+  const [copiedNs, setCopiedNs] = useState<string | null>(null);
 
   // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin.
   // For subdir pages (e.g. "about/index.html") base must point to that subdir,
@@ -1480,29 +1495,51 @@ export default function SiteEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localPages]);
 
-  // Load existing custom domains on mount
+  // Load existing domain/zone status on mount
   async function fetchDomains() {
     const res = await fetch(`/api/sites/${siteId}/domain`);
     const data = await res.json();
-    if (data.domains?.length > 0) {
-      const d = data.domains[0];
-      setActiveDomain(d.name);
-      setDomainStatus(d.status === "active" ? "active" : "pending");
-      if (d.status !== "active") {
-        setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
-        startDomainPolling(d.name);
+
+    if (data.type === "custom") {
+      setDomainType("custom");
+      setApexDomain(data.apexDomain);
+      setZoneNameservers(data.nameservers ?? []);
+      setActiveDomain(data.apexDomain ? `www.${data.apexDomain}` : null);
+      if (data.status === "active") {
+        setDomainStatus("active");
+      } else {
+        setDomainStatus("pending_nameservers");
+        startZonePolling();
+      }
+    } else if (data.type === "zing") {
+      setDomainType("zing");
+      setActiveDomain(data.domain);
+      setDomainStatus(data.status === "active" ? "active" : "pending");
+      if (data.status !== "active") {
+        setCnameTarget(data.verification_data?.cname_target ?? `${siteId}.pages.dev`);
+        startZingPolling(data.domain);
       }
     }
   }
 
-  function startDomainPolling(domain: string) {
+  function startZonePolling() {
     if (domainPollRef.current) clearInterval(domainPollRef.current);
     domainPollRef.current = setInterval(async () => {
-      const res = await fetch(`/api/sites/${siteId}/domain`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
-      });
+      const res = await fetch(`/api/sites/${siteId}/domain`);
+      const data = await res.json();
+      if (data.status === "active") {
+        clearInterval(domainPollRef.current!);
+        domainPollRef.current = null;
+        setDomainStatus("active");
+        await fetchSite();
+      }
+    }, 30000);
+  }
+
+  function startZingPolling(domain: string) {
+    if (domainPollRef.current) clearInterval(domainPollRef.current);
+    domainPollRef.current = setInterval(async () => {
+      const res = await fetch(`/api/sites/${siteId}/domain`);
       const data = await res.json();
       if (data.status === "active") {
         clearInterval(domainPollRef.current!);
@@ -1512,6 +1549,17 @@ export default function SiteEditorPage() {
         await fetchSite();
       }
     }, 15000);
+  }
+
+  async function checkNowZone() {
+    const res = await fetch(`/api/sites/${siteId}/domain`);
+    const data = await res.json();
+    if (data.status === "active") {
+      if (domainPollRef.current) clearInterval(domainPollRef.current);
+      domainPollRef.current = null;
+      setDomainStatus("active");
+      await fetchSite();
+    }
   }
 
   async function handleAddDomain() {
@@ -1529,22 +1577,50 @@ export default function SiteEditorPage() {
       setDomainStatus("error");
       return;
     }
-    const d = data.domain;
-    setActiveDomain(d.name);
-    if (d.status === "active") {
-      setDomainStatus("active");
-      await fetchSite();
-    } else {
-      setDomainStatus("pending");
-      // CF Pages returns the project URL as the CNAME target
-      setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
-      startDomainPolling(d.name);
+
+    if (data.type === "zing") {
+      setDomainType("zing");
+      setActiveDomain(data.domain);
+      if (data.status === "active") {
+        setDomainStatus("active");
+        await fetchSite();
+      } else {
+        setDomainStatus("pending");
+        setCnameTarget(`${siteId}.pages.dev`);
+        startZingPolling(data.domain);
+      }
+    } else if (data.type === "custom") {
+      setDomainType("custom");
+      setApexDomain(data.apexDomain);
+      setActiveDomain(data.wwwDomain);
+      setZoneNameservers(data.nameservers);
+      setImportedRecords(data.importedRecords ?? []);
+      setDomainStatus("pending_nameservers");
+      startZonePolling();
     }
     setDomainInput("");
   }
 
+  async function handleSendInstructions() {
+    if (!apexDomain || !zoneNameservers.length) return;
+    setSendingInstructions(true);
+    await fetch(`/api/sites/${siteId}/domain/send-instructions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain: apexDomain, nameservers: zoneNameservers }),
+    });
+    setInstructionsSent(true);
+    setSendingInstructions(false);
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedNs(text);
+    setTimeout(() => setCopiedNs(null), 2000);
+  }
+
   async function handleRemoveDomain() {
-    if (!activeDomain) return;
+    if (!activeDomain && !apexDomain) return;
     setRemovingDomain(true);
     if (domainPollRef.current) clearInterval(domainPollRef.current);
     await fetch(`/api/sites/${siteId}/domain`, {
@@ -1554,7 +1630,12 @@ export default function SiteEditorPage() {
     });
     setActiveDomain(null);
     setDomainStatus("idle");
+    setDomainType("none");
     setCnameTarget(null);
+    setApexDomain(null);
+    setZoneNameservers([]);
+    setImportedRecords([]);
+    setInstructionsSent(false);
     setRemovingDomain(false);
     await fetchSite();
   }
@@ -2058,7 +2139,7 @@ export default function SiteEditorPage() {
           <div className="mt-6 pt-6 border-t border-gray-200">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Custom Domain
+                Go Live
               </p>
               {domainStatus === "active" && (
                 <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
@@ -2066,67 +2147,207 @@ export default function SiteEditorPage() {
                   Live
                 </span>
               )}
-              {domainStatus === "pending" && (
+              {(domainStatus === "pending" || domainStatus === "pending_nameservers") && (
                 <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block animate-pulse" />
-                  Pending DNS
+                  {domainStatus === "pending_nameservers" ? "Pending Nameservers" : "Pending DNS"}
                 </span>
               )}
             </div>
 
-            {activeDomain ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
-                  <span className="text-sm font-medium text-zing-dark">{activeDomain}</span>
-                  <button
-                    onClick={handleRemoveDomain}
-                    disabled={removingDomain}
-                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
-                  >
-                    {removingDomain ? "Removing..." : "Remove"}
-                  </button>
-                </div>
+            {/* Active domain header + remove */}
+            {activeDomain && (
+              <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2 mb-2">
+                <span className="text-sm font-medium text-zing-dark">{activeDomain}</span>
+                <button
+                  onClick={handleRemoveDomain}
+                  disabled={removingDomain}
+                  className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                >
+                  {removingDomain ? "Removing..." : "Remove"}
+                </button>
+              </div>
+            )}
 
-                {domainStatus === "pending" && cnameTarget && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs space-y-1.5">
-                    <p className="font-medium text-amber-800">DNS setup required</p>
-                    <p className="text-amber-700">Add this CNAME record at your domain registrar:</p>
-                    <div className="font-mono bg-white border border-amber-200 rounded px-2 py-1.5 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Type</span>
-                        <span className="font-semibold">CNAME</span>
+            {/* ── Live state ── */}
+            {domainStatus === "active" && site?.live_url && (
+              <a
+                href={site.live_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center text-xs text-zing-teal hover:underline mb-2"
+              >
+                Open live site ↗
+              </a>
+            )}
+
+            {/* ── ZING subdomain pending ── */}
+            {domainType === "zing" && domainStatus === "pending" && cnameTarget && (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs space-y-1.5">
+                <p className="font-medium text-amber-800">DNS setup required</p>
+                <p className="text-amber-700">Add this CNAME record at your domain registrar:</p>
+                <div className="font-mono bg-white border border-amber-200 rounded px-2 py-1.5 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Type</span>
+                    <span className="font-semibold">CNAME</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Name</span>
+                    <span className="font-semibold">@</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-500 shrink-0">Target</span>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(cnameTarget)}
+                      className="font-semibold text-zing-teal hover:underline truncate"
+                      title="Click to copy"
+                    >
+                      {cnameTarget}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-amber-600">Checking every 15s — this page will update automatically.</p>
+              </div>
+            )}
+
+            {/* ── Custom domain: DNS review + nameservers + polling ── */}
+            {domainType === "custom" && domainStatus === "pending_nameservers" && (
+              <div className="space-y-3">
+
+                {/* DNS Review Panel */}
+                {importedRecords.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-md overflow-hidden">
+                    <button
+                      onClick={() => setDnsExpanded(!dnsExpanded)}
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-blue-800 hover:bg-blue-100 transition-colors"
+                    >
+                      <span>DNS Records Imported ({importedRecords.length})</span>
+                      <svg className={`w-3.5 h-3.5 transition-transform ${dnsExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                    {dnsExpanded && (
+                      <div className="px-3 pb-3 space-y-1">
+                        {/* Group by type */}
+                        {["MX", "TXT", "A", "AAAA", "CNAME", "NS", "SRV"].map((type) => {
+                          const records = importedRecords.filter((r) => r.type === type);
+                          if (!records.length) return null;
+                          return (
+                            <div key={type}>
+                              <p className="text-[10px] font-bold text-blue-700 uppercase mt-1">{type}</p>
+                              {records.map((r) => (
+                                <div key={r.id} className="font-mono text-[11px] text-blue-900 pl-2 truncate">
+                                  {r.name} → {r.content}
+                                  {r.priority !== undefined && ` (priority ${r.priority})`}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                        {/* Remaining types */}
+                        {importedRecords.filter((r) => !["MX", "TXT", "A", "AAAA", "CNAME", "NS", "SRV"].includes(r.type)).length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-bold text-blue-700 uppercase mt-1">Other</p>
+                            {importedRecords.filter((r) => !["MX", "TXT", "A", "AAAA", "CNAME", "NS", "SRV"].includes(r.type)).map((r) => (
+                              <div key={r.id} className="font-mono text-[11px] text-blue-900 pl-2 truncate">
+                                {r.type} {r.name} → {r.content}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-[10px] text-blue-600 mt-2 italic">
+                          Review above records. Fix any issues in Cloudflare before proceeding.
+                        </p>
+                        <div className="bg-white border border-blue-200 rounded px-2 py-1.5 mt-1">
+                          <p className="text-[11px] font-medium text-blue-800">
+                            Website CNAME added: www → {siteId}.pages.dev
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Name</span>
-                        <span className="font-semibold">@</span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span className="text-gray-500 shrink-0">Target</span>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(cnameTarget)}
-                          className="font-semibold text-zing-teal hover:underline truncate"
-                          title="Click to copy"
-                        >
-                          {cnameTarget}
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-amber-600">Checking every 15s — this page will update automatically once DNS propagates.</p>
+                    )}
                   </div>
                 )}
 
-                {domainStatus === "active" && site?.live_url && (
-                  <a
-                    href={site.live_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-center text-xs text-zing-teal hover:underline"
+                {/* Nameserver Instructions */}
+                <div className="bg-gray-50 border border-gray-200 rounded-md p-3 space-y-2">
+                  <p className="text-xs font-medium text-gray-800">
+                    Send these nameservers to {site?.business_name ?? "the customer"}:
+                  </p>
+                  {zoneNameservers.map((ns) => (
+                    <div key={ns} className="flex items-center justify-between bg-white border border-gray-200 rounded px-2 py-1.5">
+                      <span className="font-mono text-xs text-gray-900">{ns}</span>
+                      <button
+                        onClick={() => copyToClipboard(ns)}
+                        className="text-[10px] text-zing-teal hover:underline font-medium ml-2"
+                      >
+                        {copiedNs === ns ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleSendInstructions}
+                    disabled={sendingInstructions || instructionsSent}
+                    className="w-full mt-1 bg-zing-teal text-white px-3 py-2 rounded-md text-xs font-medium hover:bg-zing-dark transition-colors disabled:opacity-50"
                   >
-                    Open live site ↗
-                  </a>
-                )}
+                    {instructionsSent ? "Instructions Sent" : sendingInstructions ? "Sending..." : "Send Instructions"}
+                  </button>
+                </div>
+
+                {/* Activation Polling */}
+                <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-3.5 h-3.5 text-amber-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span className="text-xs text-amber-800">Checking nameserver propagation...</span>
+                  </div>
+                  <button
+                    onClick={checkNowZone}
+                    className="text-[10px] text-amber-700 hover:text-amber-900 font-medium underline"
+                  >
+                    Check Now
+                  </button>
+                </div>
+
+                {/* Registrar Guides */}
+                <div className="border border-gray-200 rounded-md overflow-hidden">
+                  <button
+                    onClick={() => setRegistrarExpanded(!registrarExpanded)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                  >
+                    <span>Registrar Guides</span>
+                    <svg className={`w-3.5 h-3.5 transition-transform ${registrarExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                  </button>
+                  {registrarExpanded && (
+                    <div className="border-t border-gray-200">
+                      {[
+                        { name: "GoDaddy", steps: "My Products → DNS → Nameservers → Change → Enter Custom → Paste ns1/ns2" },
+                        { name: "Namecheap", steps: "Domain List → Manage → Nameservers → Custom DNS → Paste ns1/ns2" },
+                        { name: "Squarespace", steps: "Domains → [domain] → DNS Settings → Nameservers → Use custom nameservers" },
+                        { name: "Cloudflare", steps: "Already on CF — change to: ns1.cloudflare.com / ns2.cloudflare.com" },
+                        { name: "Google Domains", steps: "DNS → Nameservers → Edit → Paste ns1/ns2" },
+                        { name: "Network Solutions", steps: "Account Manager → Manage Domain Names → Edit DNS → Nameservers" },
+                      ].map((reg) => (
+                        <div key={reg.name} className="border-t border-gray-100 first:border-t-0">
+                          <button
+                            onClick={() => setExpandedRegistrar(expandedRegistrar === reg.name ? null : reg.name)}
+                            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                          >
+                            <span className="font-medium">{reg.name}</span>
+                            <svg className={`w-3 h-3 transition-transform ${expandedRegistrar === reg.name ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                          </button>
+                          {expandedRegistrar === reg.name && (
+                            <p className="px-3 pb-2 text-[10px] text-gray-500">{reg.steps}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
+            )}
+
+            {/* ── Idle: domain input form ── */}
+            {(!activeDomain && domainStatus !== "adding") && (
               <div className="space-y-2">
                 <div className="flex gap-2">
                   <input
@@ -2139,10 +2360,10 @@ export default function SiteEditorPage() {
                   />
                   <button
                     onClick={handleAddDomain}
-                    disabled={domainStatus === "adding" || !domainInput.trim()}
+                    disabled={!domainInput.trim()}
                     className="bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap"
                   >
-                    {domainStatus === "adding" ? "Adding..." : "Go Live"}
+                    Go Live
                   </button>
                 </div>
                 {domainError && (
@@ -2151,6 +2372,17 @@ export default function SiteEditorPage() {
                 <p className="text-xs text-gray-400">
                   Enter the customer&apos;s domain. SSL is provisioned automatically by Cloudflare.
                 </p>
+              </div>
+            )}
+
+            {/* Adding state */}
+            {domainStatus === "adding" && (
+              <div className="flex items-center gap-2 py-3">
+                <svg className="w-4 h-4 text-zing-teal animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-xs text-gray-600">Creating Cloudflare zone and scanning DNS...</span>
               </div>
             )}
           </div>
