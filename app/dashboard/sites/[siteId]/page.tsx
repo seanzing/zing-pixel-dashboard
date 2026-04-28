@@ -78,7 +78,7 @@ export default function SiteEditorPage() {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [editLog, setEditLog] = useState<EditLogEntry[]>([]);
-  const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions" | "locations">("deployments");
+  const [bottomTab, setBottomTab] = useState<"deployments" | "activity" | "versions" | "locations" | "golive">("deployments");
   const [locations, setLocations] = useState<Array<{ slug: string; label: string; url: string }>>([]);
   const [locationsLoading, setLocationsLoading] = useState(false);
   const [locationsMeta, setLocationsMeta] = useState<{ indexUrl: string | null; total: number } | null>(null);
@@ -2075,276 +2075,33 @@ export default function SiteEditorPage() {
             {saving ? "Saving..." : "Save Changes"}
           </button>
 
-          {/* Go Live / Custom Domain */}
+          {/* Go Live — moved to bottom panel tab */}
           <div className="mt-6 pt-6 border-t border-gray-200">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Go Live
-              </p>
-              {domainStatus === "active" && (
-                <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-                  Live
-                </span>
-              )}
-              {(domainStatus === "entri_pending" || domainStatus === "manual_pending") && (
-                <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block animate-pulse" />
-                  Pending DNS
-                </span>
-              )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Go Live</p>
+                {domainStatus === "active" && (
+                  <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                    Live
+                  </span>
+                )}
+                {(domainStatus === "entri_pending" || domainStatus === "manual_pending") && (
+                  <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block animate-pulse" />
+                    Pending DNS
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setBottomTab("golive")}
+                className="text-xs text-zing-teal hover:underline font-medium"
+              >
+                Open →
+              </button>
             </div>
-
-            {/* State 3: Live */}
             {domainStatus === "active" && activeDomain && (
-              <div className="space-y-3">
-                <div className="bg-green-50 border border-green-200 rounded-md p-3 text-center">
-                  <p className="text-sm font-semibold text-green-800">Site is Live!</p>
-                  <a
-                    href={`https://${activeDomain}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-zing-teal hover:underline"
-                  >
-                    https://{activeDomain} ↗
-                  </a>
-                </div>
-                <div className="flex gap-2">
-                  <a
-                    href={`https://${activeDomain}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 text-center bg-zing-teal text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-zing-teal/90 transition-colors"
-                  >
-                    Open →
-                  </a>
-                  <button
-                    onClick={handleRemoveDomain}
-                    disabled={removingDomain}
-                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50 px-3 py-2"
-                  >
-                    {removingDomain ? "Removing..." : "Remove Domain"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* State 1: Entri pending */}
-            {domainStatus === "entri_pending" && activeDomain && (
-              <div className="space-y-3">
-                <div className="bg-green-50 border border-green-200 rounded-md p-2.5 text-xs">
-                  <p className="font-medium text-green-800">ZING&apos;s side is ready</p>
-                  <p className="text-green-700">{activeDomain} is registered with Cloudflare</p>
-                </div>
-
-                {entriConnectUrl && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-gray-700">Send this link to the customer:</p>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        readOnly
-                        value={entriConnectUrl}
-                        className="flex-1 px-2.5 py-1.5 bg-gray-50 border border-gray-300 rounded text-xs font-mono truncate"
-                      />
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(entriConnectUrl); }}
-                        className="px-2.5 py-1.5 bg-gray-100 border border-gray-300 rounded text-xs font-medium hover:bg-gray-200 transition-colors shrink-0"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => { console.log('[Scout stub] Send Entri link:', entriConnectUrl); setScoutSent(true); }}
-                      className="w-full text-center border border-zing-teal text-zing-teal px-3 py-1.5 rounded-md text-xs font-medium hover:bg-zing-teal/5 transition-colors"
-                    >
-                      {scoutSent ? "Sent! (stub)" : "Send via Scout"}
-                    </button>
-                  </div>
-                )}
-
-                <div className="text-xs text-gray-500 space-y-1">
-                  <p>Waiting for customer to connect domain...</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">
-                      Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}
-                    </span>
-                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleRemoveDomain}
-                  disabled={removingDomain}
-                  className="w-full text-center text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1"
-                >
-                  {removingDomain ? "Removing..." : "Remove Domain"}
-                </button>
-              </div>
-            )}
-
-            {/* State 2: Manual DNS pending */}
-            {domainStatus === "manual_pending" && activeDomain && (
-              <div className="space-y-3">
-                <div className="bg-green-50 border border-green-200 rounded-md p-2.5 text-xs">
-                  <p className="font-medium text-green-800">ZING&apos;s side is ready</p>
-                  <p className="text-green-700">{activeDomain} registered with Cloudflare</p>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-gray-700">Add these DNS records at the customer&apos;s registrar:</p>
-
-                  {manualRecords?.www && (
-                    <div className="bg-white border border-gray-200 rounded-md p-2.5 text-xs font-mono space-y-1">
-                      <div className="flex justify-between items-center">
-                        <div className="grid grid-cols-4 gap-2 flex-1 text-[10px] uppercase text-gray-400 font-sans font-semibold">
-                          <span>Type</span><span>Host</span><span>Value</span><span>Proxy</span>
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <div className="grid grid-cols-4 gap-2 flex-1">
-                          <span className="font-semibold">{manualRecords.www.type}</span>
-                          <span>{manualRecords.www.host}</span>
-                          <span className="truncate" title={manualRecords.www.value}>{manualRecords.www.value}</span>
-                          <span className="text-red-600 font-sans font-semibold">OFF</span>
-                        </div>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(`${manualRecords.www!.type} ${manualRecords.www!.host} ${manualRecords.www!.value}`)}
-                          className="text-[10px] text-zing-teal hover:underline font-sans ml-2 shrink-0"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {manualRecords?.apex && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-md p-2.5 text-xs space-y-1">
-                      <p className="font-medium text-amber-800">Apex / Root domain (@):</p>
-                      <p className="text-amber-700">
-                        Add a URL redirect: <span className="font-mono font-semibold">@</span> → <span className="font-mono font-semibold">{manualRecords.apex.value}</span>
-                      </p>
-                      <p className="text-amber-600 text-[10px]">
-                        Most registrars: &quot;Forwarding&quot; or &quot;URL Redirect&quot;. Cloudflare: CNAME @ proxied.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Registrar guides accordion */}
-                <div>
-                  <button
-                    onClick={() => setShowRegistrarGuides(!showRegistrarGuides)}
-                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 font-medium"
-                  >
-                    <span className={`transition-transform ${showRegistrarGuides ? "rotate-90" : ""}`}>▶</span>
-                    Registrar guides
-                  </button>
-                  {showRegistrarGuides && (
-                    <div className="mt-2 space-y-2 text-[11px] text-gray-600 bg-gray-50 rounded-md p-3 border border-gray-200">
-                      <div>
-                        <p className="font-semibold text-gray-700">GoDaddy</p>
-                        <p>My Products → DNS → Manage → Add Record → CNAME → Name: www → Value: {siteId}.pages.dev → Save</p>
-                        <p className="text-gray-500">Apex: Forwarding → Add → Forward to: https://www.{apexDomain} → Forward only</p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-700">Namecheap</p>
-                        <p>Domain List → Manage → Advanced DNS → Add → CNAME → Host: www → Value: {siteId}.pages.dev</p>
-                        <p className="text-gray-500">Apex: URL Redirect Record → Host: @ → Value: https://www.{apexDomain}</p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-700">Cloudflare</p>
-                        <p>DNS → Records → Add → CNAME → Name: www → Target: {siteId}.pages.dev → Proxy: OFF (grey cloud)</p>
-                        <p className="text-gray-500">Apex: CNAME → Name: @ → Target: {siteId}.pages.dev → Proxy: ON (orange cloud, flattening)</p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-700">Squarespace</p>
-                        <p>Domains → [domain] → DNS Settings → Custom Records → CNAME → Host: www → Data: {siteId}.pages.dev</p>
-                        <p className="text-gray-500">Apex: ALIAS → Host: @ → Data: {siteId}.pages.dev</p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-700">Google Domains</p>
-                        <p>DNS → Manage custom records → CNAME → Host: www → Data: {siteId}.pages.dev</p>
-                        <p className="text-gray-500">Apex: CNAME @ if supported, or URL Redirect</p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-700">Network Solutions</p>
-                        <p>Manage Domain → Advanced → DNS → CNAME Records → Alias: www → Other Host: {siteId}.pages.dev.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-xs text-gray-500 space-y-1">
-                  <p>Polling for DNS propagation...</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">
-                      Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}
-                    </span>
-                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleRemoveDomain}
-                  disabled={removingDomain}
-                  className="w-full text-center text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1"
-                >
-                  {removingDomain ? "Removing..." : "Remove Domain"}
-                </button>
-              </div>
-            )}
-
-            {/* State 0: No domain set */}
-            {(domainStatus === "idle" || domainStatus === "error" || domainStatus === "adding") && !activeDomain && (
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  value={domainInput}
-                  onChange={(e) => setDomainInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
-                  placeholder="e.g. mooreroofingfl.com"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
-                />
-
-                <div className="space-y-1.5">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="publishMode"
-                      checked={publishMode === "entri"}
-                      onChange={() => setPublishMode("entri")}
-                      className="text-zing-teal focus:ring-zing-teal"
-                    />
-                    <span className="text-xs text-gray-700">Entri — Automated <span className="text-gray-400">(Recommended)</span></span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="publishMode"
-                      checked={publishMode === "manual"}
-                      onChange={() => setPublishMode("manual")}
-                      className="text-zing-teal focus:ring-zing-teal"
-                    />
-                    <span className="text-xs text-gray-700">Manual DNS</span>
-                  </label>
-                </div>
-
-                <button
-                  onClick={handleAddDomain}
-                  disabled={domainStatus === "adding" || !domainInput.trim()}
-                  className="w-full bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
-                >
-                  {domainStatus === "adding" ? "Setting up..." : "Set Up Domain →"}
-                </button>
-
-                {domainError && (
-                  <p className="text-xs text-red-600">{domainError}</p>
-                )}
-                <p className="text-xs text-gray-400">
-                  Enter the customer&apos;s domain. SSL is provisioned automatically.
-                </p>
-              </div>
+              <p className="mt-1 text-xs text-gray-500 truncate">https://{activeDomain}</p>
             )}
           </div>
 
@@ -3278,7 +3035,7 @@ export default function SiteEditorPage() {
       {/* Bottom panel: Deployments / Activity / Versions / Locations */}
       <div className="h-48 shrink-0 flex flex-col bg-white border-t border-gray-200">
         <div className="flex gap-0.5 px-5 border-b border-gray-200">
-          {(["deployments", "activity", "versions", "locations"] as const).map((tab) => (
+          {(["deployments", "activity", "versions", "locations", "golive"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -3302,7 +3059,12 @@ export default function SiteEditorPage() {
               {tab === "locations" && locations.length > 0 && (
                 <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "locations" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{locations.length}</span>
               )}
-
+              {tab === "golive" && domainStatus === "active" && (
+                <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-green-100 text-green-600">Live</span>
+              )}
+              {tab === "golive" && (domainStatus === "entri_pending" || domainStatus === "manual_pending") && (
+                <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-amber-100 text-amber-600 animate-pulse">Pending</span>
+              )}
             </button>
           ))}
         </div>
@@ -3436,6 +3198,164 @@ export default function SiteEditorPage() {
                 </div>
               </div>
             )
+          )}
+
+          {/* ── Go Live tab ── */}
+          {bottomTab === "golive" && (
+            <div className="space-y-4 pb-2">
+
+              {/* State: Live */}
+              {domainStatus === "active" && activeDomain && (
+                <div className="space-y-3">
+                  <div className="bg-green-50 border border-green-200 rounded-md p-3 text-center">
+                    <p className="text-sm font-semibold text-green-800">✅ Site is Live</p>
+                    <a href={`https://${activeDomain}`} target="_blank" rel="noopener noreferrer" className="text-sm text-zing-teal hover:underline">
+                      https://{activeDomain} ↗
+                    </a>
+                  </div>
+                  <div className="flex gap-2">
+                    <a href={`https://${activeDomain}`} target="_blank" rel="noopener noreferrer"
+                      className="flex-1 text-center bg-zing-teal text-white px-3 py-2 rounded-md text-xs font-medium hover:bg-zing-teal/90 transition-colors">
+                      Open Site →
+                    </a>
+                    <button onClick={handleRemoveDomain} disabled={removingDomain}
+                      className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50 px-3 py-2">
+                      {removingDomain ? "Removing..." : "Remove Domain"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* State: Entri pending */}
+              {domainStatus === "entri_pending" && activeDomain && (
+                <div className="space-y-3">
+                  <div className="bg-green-50 border border-green-200 rounded-md p-2.5">
+                    <p className="text-xs font-medium text-green-800">✅ ZING&apos;s side is ready</p>
+                    <p className="text-xs text-green-700 mt-0.5">{activeDomain} registered with Cloudflare</p>
+                  </div>
+                  {entriConnectUrl && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-gray-700">Customer connect link:</p>
+                      <div className="flex gap-1.5">
+                        <input type="text" readOnly value={entriConnectUrl}
+                          className="flex-1 px-2.5 py-1.5 bg-gray-50 border border-gray-300 rounded text-xs font-mono" />
+                        <button onClick={() => navigator.clipboard.writeText(entriConnectUrl)}
+                          className="px-3 py-1.5 bg-gray-100 border border-gray-300 rounded text-xs font-medium hover:bg-gray-200 shrink-0">Copy</button>
+                      </div>
+                      <button
+                        onClick={() => { console.log('[Scout stub] Send Entri link:', entriConnectUrl); setScoutSent(true); }}
+                        className="w-full border border-zing-teal text-zing-teal px-3 py-1.5 rounded-md text-xs font-medium hover:bg-zing-teal/5">
+                        {scoutSent ? "✓ Sent (stub)" : "Send via Scout"}
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span>Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}</span>
+                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
+                  </div>
+                  <button onClick={handleRemoveDomain} disabled={removingDomain}
+                    className="w-full text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1">
+                    {removingDomain ? "Removing..." : "Remove Domain"}
+                  </button>
+                </div>
+              )}
+
+              {/* State: Manual DNS pending */}
+              {domainStatus === "manual_pending" && activeDomain && manualRecords && (
+                <div className="space-y-3">
+                  <div className="bg-green-50 border border-green-200 rounded-md p-2.5">
+                    <p className="text-xs font-medium text-green-800">✅ ZING&apos;s side is ready</p>
+                    <p className="text-xs text-green-700 mt-0.5">{activeDomain} registered with Cloudflare</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-700 mb-1.5">Add these DNS records at the customer&apos;s registrar:</p>
+                    <div className="bg-gray-50 border border-gray-200 rounded-md overflow-hidden">
+                      <div className="grid grid-cols-4 gap-2 px-3 py-1.5 bg-gray-100 text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                        <span>Type</span><span>Host</span><span className="col-span-2">Value</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 px-3 py-2 text-xs border-t border-gray-200 items-center">
+                        <span className="font-mono text-gray-600">CNAME</span>
+                        <span className="font-mono text-gray-600">www</span>
+                        <span className="font-mono text-gray-800 col-span-1 truncate">{siteId}.pages.dev</span>
+                        <button onClick={() => navigator.clipboard.writeText(`${siteId}.pages.dev`)}
+                          className="text-[10px] text-zing-teal hover:underline text-right">Copy</button>
+                      </div>
+                      <div className="px-3 py-2 text-xs border-t border-gray-200 bg-amber-50">
+                        <p className="font-medium text-amber-800 mb-0.5">Apex / Root (@):</p>
+                        <p className="text-amber-700">Add a <strong>URL Redirect</strong> @ → https://www.{activeDomain.replace("www.", "")}</p>
+                        <p className="text-[10px] text-amber-600 mt-0.5">GoDaddy: Forwarding · Namecheap: URL Redirect · Cloudflare: CNAME @ proxied</p>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1.5">⚠️ Proxy/orange cloud must be OFF for the www CNAME (unless on Cloudflare DNS)</p>
+                  </div>
+
+                  {/* Registrar guides */}
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-zing-teal font-medium select-none">Registrar guides ▾</summary>
+                    <div className="mt-2 space-y-2 text-[11px] text-gray-600 border border-gray-200 rounded-md p-2.5">
+                      {[
+                        { name: "GoDaddy", steps: "My Products → DNS → Manage → Add Record → CNAME → Name: www → Value: " + siteId + ".pages.dev → Save. Apex: Forwarding → Forward to https://www." + (activeDomain||"").replace("www.","") },
+                        { name: "Namecheap", steps: "Domain List → Manage → Advanced DNS → Add Record → CNAME → Host: www → Value: " + siteId + ".pages.dev. Apex: URL Redirect → Host: @ → Value: https://www." + (activeDomain||"").replace("www.","") },
+                        { name: "Cloudflare", steps: "DNS → Records → Add → CNAME → Name: www → Target: " + siteId + ".pages.dev → Proxy: OFF. Apex: CNAME → Name: @ → Target: " + siteId + ".pages.dev → Proxy: ON (flattening)" },
+                        { name: "Squarespace", steps: "Domains → [domain] → DNS Settings → Custom Records → CNAME → Host: www → Data: " + siteId + ".pages.dev. Apex: ALIAS → Host: @ → Data: " + siteId + ".pages.dev" },
+                        { name: "Google Domains", steps: "DNS → Manage custom records → Create → CNAME → Host: www → Data: " + siteId + ".pages.dev. Apex: URL redirect → @ → https://www." + (activeDomain||"").replace("www.","") },
+                        { name: "Network Solutions", steps: "Account Manager → Manage Domain → Advanced → DNS → CNAME → Alias: www → Other Host: " + siteId + ".pages.dev." },
+                      ].map(r => (
+                        <div key={r.name}>
+                          <p className="font-semibold text-gray-700">{r.name}</p>
+                          <p className="text-gray-500 mt-0.5">{r.steps}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span>Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}</span>
+                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
+                  </div>
+                  <button onClick={handleRemoveDomain} disabled={removingDomain}
+                    className="w-full text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1">
+                    {removingDomain ? "Removing..." : "Remove Domain"}
+                  </button>
+                </div>
+              )}
+
+              {/* State: Idle — domain setup form */}
+              {domainStatus === "idle" && (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-500">Set up a custom domain for this site. SSL is provisioned automatically.</p>
+                  <div>
+                    <label className="text-[11px] font-medium text-gray-600 block mb-1">Customer domain</label>
+                    <input
+                      type="text"
+                      placeholder="example.com or www.example.com"
+                      value={domainInput || ""}
+                      onChange={(e) => setDomainInput(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-xs focus:outline-none focus:border-zing-teal"
+                    />
+                  </div>
+                  <div className="flex gap-3 text-xs">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="publishMode" value="entri" checked={publishMode === "entri"} onChange={() => setPublishMode("entri")} className="accent-zing-teal" />
+                      <span>Entri — Automated <span className="text-gray-400">(Recommended)</span></span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="publishMode" value="manual" checked={publishMode === "manual"} onChange={() => setPublishMode("manual")} className="accent-zing-teal" />
+                      <span>Manual DNS</span>
+                    </label>
+                  </div>
+                  {domainError && <p className="text-xs text-red-600">{domainError}</p>}
+                  <button
+                    onClick={handleAddDomain}
+                    disabled={!domainInput?.trim()}
+                    className="w-full bg-zing-teal text-white px-3 py-2 rounded-md text-xs font-medium hover:bg-zing-teal/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Set Up Domain →
+                  </button>
+                </div>
+              )}
+
+            </div>
           )}
         </div>
       </div>
