@@ -801,24 +801,30 @@ export default function SiteEditorPage() {
         return { anchor: cur || el, container: document.body };
       }
 
-      var insertInfo = findBlockContainer(target);
-      var insertAnchor = insertInfo.anchor;
-      var insertContainer = insertInfo.container;
-
-      // Capture original sibling HTML for undo tracking
-      var insertOriginal = insertAnchor ? insertAnchor.outerHTML : null;
-      if (insertAnchor && insertContainer) {
-        if (insertAnchor.nextSibling) {
-          insertContainer.insertBefore(widget, insertAnchor.nextSibling);
+      // Handle insert-before-first-section (target is null, index 0)
+      if (!target) {
+        var firstSection = document.querySelector('section, [class*="section"]');
+        if (firstSection && firstSection.parentNode) {
+          firstSection.parentNode.insertBefore(widget, firstSection);
         } else {
-          insertContainer.appendChild(widget);
+          document.body.insertBefore(widget, document.body.firstChild);
         }
-        var insertNew = insertOriginal + widget.outerHTML;
-        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:insertOriginal, newHtml:insertNew, needsRebuild:false }, '*');
       } else {
-        document.body.appendChild(widget);
-        window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:'</body>', newHtml:widget.outerHTML+'</body>', needsRebuild:false }, '*');
+        var insertInfo = findBlockContainer(target);
+        var insertAnchor = insertInfo.anchor;
+        var insertContainer = insertInfo.container;
+        if (insertAnchor && insertContainer) {
+          if (insertAnchor.nextSibling) {
+            insertContainer.insertBefore(widget, insertAnchor.nextSibling);
+          } else {
+            insertContainer.appendChild(widget);
+          }
+        } else {
+          document.body.appendChild(widget);
+        }
       }
+      // Persist widget using </body> anchor — avoids DOM serialization mismatch
+      window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:'</body>', newHtml:widget.outerHTML+'</body>', needsRebuild:false }, '*');
       // Wire up interactivity on the newly inserted widget
       var wIdx = document.querySelectorAll('[data-pixel-text]').length;
       widget.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,button,[class*="btn"],[class*="cta"]').forEach(function(el) {
@@ -841,6 +847,7 @@ export default function SiteEditorPage() {
         linkEl.setAttribute('href', d.href);
         window.parent.postMessage({ type:'PIXEL_TEXT_CHANGE', originalHtml:origH, newHtml:linkEl.outerHTML, needsRebuild:false }, '*');
       } else {
+        if (!linkEl.parentNode) return;
         var aWrap = document.createElement('a');
         aWrap.setAttribute('href', d.href);
         linkEl.parentNode.insertBefore(aWrap, linkEl);
@@ -850,7 +857,7 @@ export default function SiteEditorPage() {
       window._pendingLinkEl = null;
     } else if (d.type === 'PIXEL_SET_IMAGE_URL') {
       var imgEl = null;
-      if (d.kind === 'img') imgEl = document.querySelector('img[src="'+d.rawSrc+'"]');
+      if (d.kind === 'img') imgEl = document.querySelector('img[src="'+CSS.escape(d.rawSrc)+'"]');
       else imgEl = document.querySelector('[style*="'+d.rawSrc+'"]');
       if (!imgEl) return;
       var origImg = imgEl.outerHTML;
