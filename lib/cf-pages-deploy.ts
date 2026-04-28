@@ -197,6 +197,11 @@ export async function cfPagesDeploy(
     return { ok: false, error: "Missing CF or GitHub env vars for direct deploy" };
   }
 
+  // Validate siteId — prevent path traversal in CF API URLs and domain provisioning
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(siteId)) {
+    return { ok: false, error: "Invalid siteId format" };
+  }
+
   const tmpDir = path.join(os.tmpdir(), `pixel-cf-${siteId}-${Date.now()}`);
 
   try {

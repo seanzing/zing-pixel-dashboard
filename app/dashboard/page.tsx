@@ -342,8 +342,14 @@ function AddSiteModal({
     if (htmlFile) {
       try {
         const html = await htmlFile.text();
-        // Brief wait so GitHub has time to write the starter file (needed for SHA)
-        await new Promise(r => setTimeout(r, 1500));
+        // Poll until GitHub has the starter file (needed for SHA)
+        let fileReady = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise(r => setTimeout(r, 800));
+          const check = await fetch(`/api/sites/${siteId}/pages`);
+          if (check.ok) { fileReady = true; break; }
+        }
+        if (!fileReady) console.warn("GitHub starter file not ready after retries");
         const deployRes = await fetch(`/api/sites/${siteId}/deploy-html`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

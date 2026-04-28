@@ -13,17 +13,19 @@ export async function POST(req: NextRequest, { params }: { params: { siteId: str
 
   if (!html) return NextResponse.json({ error: "html required" }, { status: 400 });
 
+  // Validate page path — prevent traversal
+  if (!page || page.includes('..') || !/^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)*\.html$/.test(page)) {
+    return NextResponse.json({ error: "Invalid page path" }, { status: 400 });
+  }
+
+  // Auth check — reject unauthenticated requests
+  const { data: { user } } = await createServerSupabaseClient().auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const deployedBy = user.email ?? "unknown";
+
   // Get current file SHA (required for GitHub update)
   const file = await getFile(`${params.siteId}/${page}`);
   if (!file) return NextResponse.json({ error: "Page not found in GitHub" }, { status: 404 });
-
-  // Get user for attribution
-  let deployedBy = "unknown";
-  try {
-    const userClient = createServerSupabaseClient();
-    const { data: { user } } = await userClient.auth.getUser();
-    if (user?.email) deployedBy = user.email;
-  } catch { /* non-fatal */ }
 
   const msg = commitMessage ?? `deploy(${params.siteId}/${page}): publish edits`;
 
@@ -67,7 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { siteId: str
     } else {
       console.warn(`[cf-deploy] ${params.siteId}/${page} failed: ${result.error}`);
     }
-  });
+  }).catch((err) => console.error('[cf-deploy] unhandled:', err));
 
   return NextResponse.json({ ok: true, commitSha });
 }
