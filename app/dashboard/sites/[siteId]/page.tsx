@@ -212,13 +212,19 @@ export default function SiteEditorPage() {
   const [locLog, setLocLog] = useState<Array<{ type: "progress" | "page" | "done" | "error"; text: string; status?: string }>>([]);
   const [locDone, setLocDone] = useState(false);
 
-  // Custom domain
+  // Custom domain / Go Live
   const [domainInput, setDomainInput] = useState("");
-  const [domainStatus, setDomainStatus] = useState<"idle" | "adding" | "pending" | "active" | "error">("idle");
+  const [publishMode, setPublishMode] = useState<"entri" | "manual">("entri");
+  const [domainStatus, setDomainStatus] = useState<"idle" | "adding" | "entri_pending" | "manual_pending" | "active" | "error">("idle");
   const [domainError, setDomainError] = useState<string | null>(null);
-  const [cnameTarget, setCnameTarget] = useState<string | null>(null);
   const [activeDomain, setActiveDomain] = useState<string | null>(null);
+  const [apexDomain, setApexDomain] = useState<string | null>(null);
+  const [entriConnectUrl, setEntriConnectUrl] = useState<string | null>(null);
+  const [manualRecords, setManualRecords] = useState<{ www?: { type: string; host: string; value: string; ttl: string; proxied: boolean; note: string }; apex?: { type: string; host: string; value: string; note: string } } | null>(null);
   const [removingDomain, setRemovingDomain] = useState(false);
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [scoutSent, setScoutSent] = useState(false);
+  const [showRegistrarGuides, setShowRegistrarGuides] = useState(false);
   const domainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Inject <base href> so relative asset paths resolve to the deployed CF Pages origin.
@@ -1487,38 +1493,42 @@ export default function SiteEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localPages]);
 
-  // Load existing custom domains on mount
+  // Load existing domain status on mount
   async function fetchDomains() {
     const res = await fetch(`/api/sites/${siteId}/domain`);
     const data = await res.json();
-    if (data.domains?.length > 0) {
-      const d = data.domains[0];
-      setActiveDomain(d.name);
-      setDomainStatus(d.status === "active" ? "active" : "pending");
-      if (d.status !== "active") {
-        setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
-        startDomainPolling(d.name);
-      }
+    if (data.status === "active") {
+      setActiveDomain(data.domain ?? data.liveUrl?.replace("https://", ""));
+      setDomainStatus("active");
+    } else if (data.status === "none") {
+      setDomainStatus("idle");
+    } else if (data.mode === "entri") {
+      setActiveDomain(data.domain);
+      setApexDomain(data.apexDomain);
+      setDomainStatus("entri_pending");
+      startDomainPolling();
+    } else if (data.mode === "manual") {
+      setActiveDomain(data.domain);
+      setApexDomain(data.apexDomain);
+      setDomainStatus("manual_pending");
+      startDomainPolling();
     }
   }
 
-  function startDomainPolling(domain: string) {
+  function startDomainPolling() {
     if (domainPollRef.current) clearInterval(domainPollRef.current);
-    domainPollRef.current = setInterval(async () => {
-      const res = await fetch(`/api/sites/${siteId}/domain`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
-      });
-      const data = await res.json();
-      if (data.status === "active") {
-        clearInterval(domainPollRef.current!);
-        domainPollRef.current = null;
-        setDomainStatus("active");
-        setCnameTarget(null);
-        await fetchSite();
-      }
-    }, 15000);
+    domainPollRef.current = setInterval(() => checkDomainStatus(), 30000);
+  }
+
+  async function checkDomainStatus() {
+    const res = await fetch(`/api/sites/${siteId}/domain`);
+    const data = await res.json();
+    setLastChecked(new Date());
+    if (data.status === "active") {
+      if (domainPollRef.current) { clearInterval(domainPollRef.current); domainPollRef.current = null; }
+      setDomainStatus("active");
+      await fetchSite();
+    }
   }
 
   async function handleAddDomain() {
@@ -1528,7 +1538,7 @@ export default function SiteEditorPage() {
     const res = await fetch(`/api/sites/${siteId}/domain`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain: domainInput.trim() }),
+      body: JSON.stringify({ domain: domainInput.trim(), mode: publishMode }),
     });
     const data = await res.json();
     if (data.error) {
@@ -1536,33 +1546,37 @@ export default function SiteEditorPage() {
       setDomainStatus("error");
       return;
     }
-    const d = data.domain;
-    setActiveDomain(d.name);
-    if (d.status === "active") {
+    setActiveDomain(data.domain);
+    setApexDomain(data.apexDomain);
+    setDomainInput("");
+    setLastChecked(new Date());
+
+    if (data.type === "immediate") {
       setDomainStatus("active");
       await fetchSite();
-    } else {
-      setDomainStatus("pending");
-      // CF Pages returns the project URL as the CNAME target
-      setCnameTarget(d.verification_data?.cname_target ?? `${siteId}.pages.dev`);
-      startDomainPolling(d.name);
+    } else if (data.type === "entri") {
+      setEntriConnectUrl(data.entri.connectUrl);
+      setDomainStatus("entri_pending");
+      startDomainPolling();
+    } else if (data.type === "manual") {
+      setManualRecords(data.records);
+      setDomainStatus("manual_pending");
+      startDomainPolling();
     }
-    setDomainInput("");
   }
 
   async function handleRemoveDomain() {
-    if (!activeDomain) return;
+    if (!activeDomain && domainStatus === "idle") return;
     setRemovingDomain(true);
-    if (domainPollRef.current) clearInterval(domainPollRef.current);
-    await fetch(`/api/sites/${siteId}/domain`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain: activeDomain }),
-    });
+    if (domainPollRef.current) { clearInterval(domainPollRef.current); domainPollRef.current = null; }
+    await fetch(`/api/sites/${siteId}/domain`, { method: "DELETE" });
     setActiveDomain(null);
+    setApexDomain(null);
+    setEntriConnectUrl(null);
+    setManualRecords(null);
     setDomainStatus("idle");
-    setCnameTarget(null);
     setRemovingDomain(false);
+    setScoutSent(false);
     await fetchSite();
   }
 
@@ -2065,7 +2079,7 @@ export default function SiteEditorPage() {
           <div className="mt-6 pt-6 border-t border-gray-200">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Custom Domain
+                Go Live
               </p>
               {domainStatus === "active" && (
                 <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
@@ -2073,7 +2087,7 @@ export default function SiteEditorPage() {
                   Live
                 </span>
               )}
-              {domainStatus === "pending" && (
+              {(domainStatus === "entri_pending" || domainStatus === "manual_pending") && (
                 <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block animate-pulse" />
                   Pending DNS
@@ -2081,82 +2095,254 @@ export default function SiteEditorPage() {
               )}
             </div>
 
-            {activeDomain ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
-                  <span className="text-sm font-medium text-zing-dark">{activeDomain}</span>
+            {/* State 3: Live */}
+            {domainStatus === "active" && activeDomain && (
+              <div className="space-y-3">
+                <div className="bg-green-50 border border-green-200 rounded-md p-3 text-center">
+                  <p className="text-sm font-semibold text-green-800">Site is Live!</p>
+                  <a
+                    href={`https://${activeDomain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-zing-teal hover:underline"
+                  >
+                    https://{activeDomain} ↗
+                  </a>
+                </div>
+                <div className="flex gap-2">
+                  <a
+                    href={`https://${activeDomain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-center bg-zing-teal text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-zing-teal/90 transition-colors"
+                  >
+                    Open →
+                  </a>
                   <button
                     onClick={handleRemoveDomain}
                     disabled={removingDomain}
-                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50 px-3 py-2"
                   >
-                    {removingDomain ? "Removing..." : "Remove"}
+                    {removingDomain ? "Removing..." : "Remove Domain"}
                   </button>
                 </div>
+              </div>
+            )}
 
-                {domainStatus === "pending" && cnameTarget && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs space-y-1.5">
-                    <p className="font-medium text-amber-800">DNS setup required</p>
-                    <p className="text-amber-700">Add this CNAME record at your domain registrar:</p>
-                    <div className="font-mono bg-white border border-amber-200 rounded px-2 py-1.5 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Type</span>
-                        <span className="font-semibold">CNAME</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Name</span>
-                        <span className="font-semibold">@</span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span className="text-gray-500 shrink-0">Target</span>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(cnameTarget)}
-                          className="font-semibold text-zing-teal hover:underline truncate"
-                          title="Click to copy"
-                        >
-                          {cnameTarget}
-                        </button>
-                      </div>
+            {/* State 1: Entri pending */}
+            {domainStatus === "entri_pending" && activeDomain && (
+              <div className="space-y-3">
+                <div className="bg-green-50 border border-green-200 rounded-md p-2.5 text-xs">
+                  <p className="font-medium text-green-800">ZING&apos;s side is ready</p>
+                  <p className="text-green-700">{activeDomain} is registered with Cloudflare</p>
+                </div>
+
+                {entriConnectUrl && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gray-700">Send this link to the customer:</p>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        readOnly
+                        value={entriConnectUrl}
+                        className="flex-1 px-2.5 py-1.5 bg-gray-50 border border-gray-300 rounded text-xs font-mono truncate"
+                      />
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(entriConnectUrl); }}
+                        className="px-2.5 py-1.5 bg-gray-100 border border-gray-300 rounded text-xs font-medium hover:bg-gray-200 transition-colors shrink-0"
+                      >
+                        Copy
+                      </button>
                     </div>
-                    <p className="text-amber-600">Checking every 15s — this page will update automatically once DNS propagates.</p>
+                    <button
+                      onClick={() => { console.log('[Scout stub] Send Entri link:', entriConnectUrl); setScoutSent(true); }}
+                      className="w-full text-center border border-zing-teal text-zing-teal px-3 py-1.5 rounded-md text-xs font-medium hover:bg-zing-teal/5 transition-colors"
+                    >
+                      {scoutSent ? "Sent! (stub)" : "Send via Scout"}
+                    </button>
                   </div>
                 )}
 
-                {domainStatus === "active" && site?.live_url && (
-                  <a
-                    href={site.live_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-center text-xs text-zing-teal hover:underline"
-                  >
-                    Open live site ↗
-                  </a>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={domainInput}
-                    onChange={(e) => setDomainInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
-                    placeholder="e.g. mooreroofingfl.com"
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
-                  />
-                  <button
-                    onClick={handleAddDomain}
-                    disabled={domainStatus === "adding" || !domainInput.trim()}
-                    className="bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {domainStatus === "adding" ? "Adding..." : "Go Live"}
-                  </button>
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>Waiting for customer to connect domain...</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">
+                      Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}
+                    </span>
+                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
+                  </div>
                 </div>
+
+                <button
+                  onClick={handleRemoveDomain}
+                  disabled={removingDomain}
+                  className="w-full text-center text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1"
+                >
+                  {removingDomain ? "Removing..." : "Remove Domain"}
+                </button>
+              </div>
+            )}
+
+            {/* State 2: Manual DNS pending */}
+            {domainStatus === "manual_pending" && activeDomain && (
+              <div className="space-y-3">
+                <div className="bg-green-50 border border-green-200 rounded-md p-2.5 text-xs">
+                  <p className="font-medium text-green-800">ZING&apos;s side is ready</p>
+                  <p className="text-green-700">{activeDomain} registered with Cloudflare</p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-gray-700">Add these DNS records at the customer&apos;s registrar:</p>
+
+                  {manualRecords?.www && (
+                    <div className="bg-white border border-gray-200 rounded-md p-2.5 text-xs font-mono space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="grid grid-cols-4 gap-2 flex-1 text-[10px] uppercase text-gray-400 font-sans font-semibold">
+                          <span>Type</span><span>Host</span><span>Value</span><span>Proxy</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <div className="grid grid-cols-4 gap-2 flex-1">
+                          <span className="font-semibold">{manualRecords.www.type}</span>
+                          <span>{manualRecords.www.host}</span>
+                          <span className="truncate" title={manualRecords.www.value}>{manualRecords.www.value}</span>
+                          <span className="text-red-600 font-sans font-semibold">OFF</span>
+                        </div>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(`${manualRecords.www!.type} ${manualRecords.www!.host} ${manualRecords.www!.value}`)}
+                          className="text-[10px] text-zing-teal hover:underline font-sans ml-2 shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {manualRecords?.apex && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-md p-2.5 text-xs space-y-1">
+                      <p className="font-medium text-amber-800">Apex / Root domain (@):</p>
+                      <p className="text-amber-700">
+                        Add a URL redirect: <span className="font-mono font-semibold">@</span> → <span className="font-mono font-semibold">{manualRecords.apex.value}</span>
+                      </p>
+                      <p className="text-amber-600 text-[10px]">
+                        Most registrars: &quot;Forwarding&quot; or &quot;URL Redirect&quot;. Cloudflare: CNAME @ proxied.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Registrar guides accordion */}
+                <div>
+                  <button
+                    onClick={() => setShowRegistrarGuides(!showRegistrarGuides)}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 font-medium"
+                  >
+                    <span className={`transition-transform ${showRegistrarGuides ? "rotate-90" : ""}`}>▶</span>
+                    Registrar guides
+                  </button>
+                  {showRegistrarGuides && (
+                    <div className="mt-2 space-y-2 text-[11px] text-gray-600 bg-gray-50 rounded-md p-3 border border-gray-200">
+                      <div>
+                        <p className="font-semibold text-gray-700">GoDaddy</p>
+                        <p>My Products → DNS → Manage → Add Record → CNAME → Name: www → Value: {siteId}.pages.dev → Save</p>
+                        <p className="text-gray-500">Apex: Forwarding → Add → Forward to: https://www.{apexDomain} → Forward only</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">Namecheap</p>
+                        <p>Domain List → Manage → Advanced DNS → Add → CNAME → Host: www → Value: {siteId}.pages.dev</p>
+                        <p className="text-gray-500">Apex: URL Redirect Record → Host: @ → Value: https://www.{apexDomain}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">Cloudflare</p>
+                        <p>DNS → Records → Add → CNAME → Name: www → Target: {siteId}.pages.dev → Proxy: OFF (grey cloud)</p>
+                        <p className="text-gray-500">Apex: CNAME → Name: @ → Target: {siteId}.pages.dev → Proxy: ON (orange cloud, flattening)</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">Squarespace</p>
+                        <p>Domains → [domain] → DNS Settings → Custom Records → CNAME → Host: www → Data: {siteId}.pages.dev</p>
+                        <p className="text-gray-500">Apex: ALIAS → Host: @ → Data: {siteId}.pages.dev</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">Google Domains</p>
+                        <p>DNS → Manage custom records → CNAME → Host: www → Data: {siteId}.pages.dev</p>
+                        <p className="text-gray-500">Apex: CNAME @ if supported, or URL Redirect</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">Network Solutions</p>
+                        <p>Manage Domain → Advanced → DNS → CNAME Records → Alias: www → Other Host: {siteId}.pages.dev.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>Polling for DNS propagation...</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">
+                      Last checked: {lastChecked ? `${Math.round((Date.now() - lastChecked.getTime()) / 1000)}s ago` : "just now"}
+                    </span>
+                    <button onClick={checkDomainStatus} className="text-zing-teal hover:underline font-medium">Check Now</button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleRemoveDomain}
+                  disabled={removingDomain}
+                  className="w-full text-center text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1"
+                >
+                  {removingDomain ? "Removing..." : "Remove Domain"}
+                </button>
+              </div>
+            )}
+
+            {/* State 0: No domain set */}
+            {(domainStatus === "idle" || domainStatus === "error" || domainStatus === "adding") && !activeDomain && (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={domainInput}
+                  onChange={(e) => setDomainInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
+                  placeholder="e.g. mooreroofingfl.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-zing-teal"
+                />
+
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="publishMode"
+                      checked={publishMode === "entri"}
+                      onChange={() => setPublishMode("entri")}
+                      className="text-zing-teal focus:ring-zing-teal"
+                    />
+                    <span className="text-xs text-gray-700">Entri — Automated <span className="text-gray-400">(Recommended)</span></span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="publishMode"
+                      checked={publishMode === "manual"}
+                      onChange={() => setPublishMode("manual")}
+                      className="text-zing-teal focus:ring-zing-teal"
+                    />
+                    <span className="text-xs text-gray-700">Manual DNS</span>
+                  </label>
+                </div>
+
+                <button
+                  onClick={handleAddDomain}
+                  disabled={domainStatus === "adding" || !domainInput.trim()}
+                  className="w-full bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {domainStatus === "adding" ? "Setting up..." : "Set Up Domain →"}
+                </button>
+
                 {domainError && (
                   <p className="text-xs text-red-600">{domainError}</p>
                 )}
                 <p className="text-xs text-gray-400">
-                  Enter the customer&apos;s domain. SSL is provisioned automatically by Cloudflare.
+                  Enter the customer&apos;s domain. SSL is provisioned automatically.
                 </p>
               </div>
             )}
