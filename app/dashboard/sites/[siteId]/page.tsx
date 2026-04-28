@@ -3429,6 +3429,14 @@ export default function SiteEditorPage() {
                 </div>
               )}
 
+              {/* State: Adding (loading) */}
+              {domainStatus === "adding" && (
+                <div className="flex items-center gap-3 py-4">
+                  <div className="w-4 h-4 border-2 border-zing-teal border-t-transparent rounded-full animate-spin shrink-0" />
+                  <p className="text-xs text-gray-500">Registering domain with Cloudflare...</p>
+                </div>
+              )}
+
               {/* State: Idle — domain setup form */}
               {domainStatus === "idle" && (
                 <div className="space-y-3">
