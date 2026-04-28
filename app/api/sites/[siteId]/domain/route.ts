@@ -1,123 +1,228 @@
 import { NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabase/server";
-import { addCustomDomain, getCustomDomains, removeCustomDomain } from "@/lib/cloudflare";
+import { createServerSupabaseClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { addCfPagesCustomDomain, getCfPagesCustomDomainStatus, removeCfPagesCustomDomain } from "@/lib/cloudflare";
+import { createEntriSession, getEntriSessionStatus } from "@/lib/entri";
 
-// GET — fetch current custom domains + verification status for this site
-export async function GET(
-  _req: Request,
-  { params }: { params: { siteId: string } }
-) {
-  const { siteId } = params;
-  const result = await getCustomDomains(siteId);
-
-  if (!result.success) {
-    return NextResponse.json({ error: result.errors?.[0]?.message ?? "CF API error" }, { status: 502 });
-  }
-
-  const domains = (result.result ?? []) as Array<{
-    name: string;
-    status: string;
-    verification_data?: { cname_target?: string };
-  }>;
-
-  return NextResponse.json({ domains });
+function normalizeDomain(input: string): { apexDomain: string; wwwDomain: string } {
+  let d = input.toLowerCase().trim();
+  d = d.replace(/^https?:\/\//, "");
+  d = d.replace(/\/.*$/, "");
+  d = d.replace(/^www\./, "");
+  return { apexDomain: d, wwwDomain: `www.${d}` };
 }
 
-// POST — add a custom domain
+async function requireAuth() {
+  const supabase = createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  return user;
+}
+
+// POST — Start Go Live process
 export async function POST(
   req: Request,
   { params }: { params: { siteId: string } }
 ) {
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { siteId } = params;
-  const { domain } = await req.json();
+  const { domain, mode } = await req.json();
 
-  if (!domain) {
-    return NextResponse.json({ error: "Missing domain" }, { status: 400 });
+  if (!domain) return NextResponse.json({ error: "Missing domain" }, { status: 400 });
+  if (!mode || !["entri", "manual"].includes(mode)) {
+    return NextResponse.json({ error: "Invalid mode — must be 'entri' or 'manual'" }, { status: 400 });
   }
 
-  const cleaned = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const { apexDomain, wwwDomain } = normalizeDomain(domain);
+  const supabase = createServiceRoleClient();
 
-  const result = await addCustomDomain(siteId, cleaned);
+  // Register www domain with CF Pages
+  let cfStatus = "initializing";
+  try {
+    const cfResult = await addCfPagesCustomDomain(siteId, wwwDomain);
+    cfStatus = cfResult.status;
 
-  if (!result.success) {
-    const msg = result.errors?.[0]?.message ?? "Failed to add domain";
-    return NextResponse.json({ error: msg }, { status: 400 });
+    // Fast-path: .zingsite.com domains go live immediately
+    if (apexDomain.endsWith(".zingsite.com")) {
+      await supabase.from("sites").update({
+        live_url: `https://${wwwDomain}`,
+        status: "live",
+        updated_at: new Date().toISOString(),
+      }).eq("id", siteId);
+      return NextResponse.json({
+        type: "immediate",
+        domain: wwwDomain,
+        apexDomain,
+        cfStatus: "active",
+      });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "CF Pages domain registration failed";
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  const domainData = result.result as {
-    name: string;
-    status: string;
-    verification_data?: { cname_target?: string };
+  // Read current build_payload, merge new fields
+  const { data: site } = await supabase.from("sites").select("build_payload").eq("id", siteId).single();
+  const currentPayload = site?.build_payload ?? {};
+  const publishingFields = {
+    publishing_domain: wwwDomain,
+    publishing_apex: apexDomain,
+    publishing_mode: mode,
+    publishing_started_at: new Date().toISOString(),
   };
 
-  // If already active, update Supabase immediately
-  if (domainData.status === "active") {
-    const supabase = createServiceRoleClient();
-    await supabase
-      .from("sites")
-      .update({
-        live_url: `https://${cleaned}`,
-        status: "live",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", siteId);
+  if (mode === "entri") {
+    // Create Entri session
+    const entriSession = await createEntriSession(apexDomain, [
+      { type: "CNAME", host: "www", value: `${siteId}.pages.dev` },
+    ]);
+
+    const updatedPayload = { ...currentPayload, ...publishingFields, entri_session_id: entriSession.sessionId };
+    await supabase.from("sites").update({
+      build_payload: updatedPayload,
+      updated_at: new Date().toISOString(),
+    }).eq("id", siteId);
+
+    return NextResponse.json({
+      type: "entri",
+      domain: wwwDomain,
+      apexDomain,
+      entri: { sessionId: entriSession.sessionId, connectUrl: entriSession.connectUrl },
+      cfStatus,
+    });
   }
 
-  return NextResponse.json({ domain: domainData });
+  // Manual mode
+  const updatedPayload = { ...currentPayload, ...publishingFields };
+  await supabase.from("sites").update({
+    build_payload: updatedPayload,
+    updated_at: new Date().toISOString(),
+  }).eq("id", siteId);
+
+  const records = {
+    www: {
+      type: "CNAME",
+      host: "www",
+      value: `${siteId}.pages.dev`,
+      ttl: "Auto",
+      proxied: false,
+      note: "Do NOT enable Cloudflare proxy (orange cloud) if your domain is on Cloudflare",
+    },
+    apex: {
+      type: "URL Redirect",
+      host: "@",
+      value: `https://www.${apexDomain}`,
+      note: "Redirect @ (apex/root) to www. Most registrars call this 'URL Redirect', 'Forwarding', or 'ALIAS'. Squarespace: Settings → Domains → DNS Settings → add CNAME record. Cloudflare: CNAME @ proxied (flattening). GoDaddy: Forwarding. Namecheap: URL Redirect.",
+    },
+  };
+
+  return NextResponse.json({
+    type: "manual",
+    domain: wwwDomain,
+    apexDomain,
+    records,
+    cfStatus,
+  });
 }
 
-// PATCH — called by frontend polling to check status and promote site when verified
-export async function PATCH(
-  req: Request,
+// GET — Check activation status
+export async function GET(
+  _req: Request,
   { params }: { params: { siteId: string } }
 ) {
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { siteId } = params;
-  const { domain } = await req.json();
-
-  const result = await getCustomDomains(siteId);
-  if (!result.success) {
-    return NextResponse.json({ error: "CF API error" }, { status: 502 });
-  }
-
-  const domains = (result.result ?? []) as Array<{ name: string; status: string }>;
-  const match = domains.find((d) => d.name === domain);
-
-  if (!match) {
-    return NextResponse.json({ status: "not_found" });
-  }
-
-  // If now active, mark site as live in Supabase
-  if (match.status === "active") {
-    const supabase = createServiceRoleClient();
-    await supabase
-      .from("sites")
-      .update({
-        live_url: `https://${domain}`,
-        status: "live",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", siteId);
-  }
-
-  return NextResponse.json({ status: match.status });
-}
-
-// DELETE — remove a custom domain
-export async function DELETE(
-  req: Request,
-  { params }: { params: { siteId: string } }
-) {
-  const { siteId } = params;
-  const { domain } = await req.json();
-
-  await removeCustomDomain(siteId, domain);
-
-  // Revert site status to preview
   const supabase = createServiceRoleClient();
-  await supabase
-    .from("sites")
-    .update({ live_url: null, status: "preview", updated_at: new Date().toISOString() })
-    .eq("id", siteId);
 
-  return NextResponse.json({ success: true });
+  const { data: site } = await supabase.from("sites").select("build_payload, status, live_url").eq("id", siteId).single();
+  if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
+
+  const payload = site.build_payload ?? {};
+  const publishingDomain = payload.publishing_domain;
+  const publishingMode = payload.publishing_mode;
+
+  if (!publishingDomain) {
+    // Check if already live via old flow
+    if (site.status === "live" && site.live_url) {
+      return NextResponse.json({ status: "active", liveUrl: site.live_url });
+    }
+    return NextResponse.json({ status: "none" });
+  }
+
+  // Check CF Pages domain status
+  let cfStatus = "unknown";
+  try {
+    const cfResult = await getCfPagesCustomDomainStatus(siteId, publishingDomain);
+    cfStatus = cfResult?.status ?? "unknown";
+  } catch {
+    cfStatus = "error";
+  }
+
+  // If active, mark live
+  if (cfStatus === "active") {
+    await supabase.from("sites").update({
+      status: "live",
+      live_url: `https://${publishingDomain}`,
+      updated_at: new Date().toISOString(),
+    }).eq("id", siteId);
+    return NextResponse.json({ status: "active", liveUrl: `https://${publishingDomain}` });
+  }
+
+  // If entri mode, also check Entri session status
+  let entriStatus = null;
+  if (publishingMode === "entri" && payload.entri_session_id) {
+    try {
+      entriStatus = await getEntriSessionStatus(payload.entri_session_id);
+    } catch {
+      entriStatus = { status: "pending" };
+    }
+  }
+
+  return NextResponse.json({
+    status: cfStatus,
+    mode: publishingMode,
+    domain: publishingDomain,
+    apexDomain: payload.publishing_apex,
+    entriStatus,
+  });
+}
+
+// DELETE — Remove domain
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { siteId: string } }
+) {
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { siteId } = params;
+  const supabase = createServiceRoleClient();
+
+  const { data: site } = await supabase.from("sites").select("build_payload").eq("id", siteId).single();
+  const payload = site?.build_payload ?? {};
+  const publishingDomain = payload.publishing_domain;
+
+  if (publishingDomain) {
+    try {
+      await removeCfPagesCustomDomain(siteId, publishingDomain);
+    } catch {
+      // Best effort removal
+    }
+  }
+
+  // Clear publishing fields from build_payload
+  const { publishing_domain, publishing_apex, publishing_mode, publishing_started_at, entri_session_id, ...rest } = payload;
+  void publishing_domain; void publishing_apex; void publishing_mode; void publishing_started_at; void entri_session_id;
+
+  await supabase.from("sites").update({
+    build_payload: Object.keys(rest).length > 0 ? rest : null,
+    status: "preview",
+    live_url: null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", siteId);
+
+  return NextResponse.json({ ok: true });
 }
