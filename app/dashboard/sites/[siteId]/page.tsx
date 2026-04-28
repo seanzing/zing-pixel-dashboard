@@ -989,6 +989,10 @@ export default function SiteEditorPage() {
   type DeployState = "idle" | "queued" | "in_progress" | "success" | "failure";
   const [deployState, setDeployState] = useState<DeployState>("idle");
   const deployPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = useState(1);
+
+  const PREVIEW_WIDTHS = { desktop: 1440, tablet: 768, mobile: 375 } as const;
 
   const stopPolling = useCallback(() => {
     if (deployPollRef.current) {
@@ -1635,6 +1639,24 @@ export default function SiteEditorPage() {
     loadDomainState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
+
+  // Preview scale: pin desktop iframe to 1440px, scale to fit container
+  useEffect(() => {
+    if (!previewContainerRef.current) return;
+    const targetWidth = PREVIEW_WIDTHS[deviceView];
+    const ro = new ResizeObserver((entries) => {
+      const containerWidth = entries[0]?.contentRect.width ?? 0;
+      if (containerWidth > 0) {
+        setPreviewScale(Math.min(1, containerWidth / targetWidth));
+      }
+    });
+    ro.observe(previewContainerRef.current);
+    // Set initial scale
+    const containerWidth = previewContainerRef.current.offsetWidth;
+    if (containerWidth > 0) setPreviewScale(Math.min(1, containerWidth / targetWidth));
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceView, rightTab]);
 
   // Undo/Redo keyboard shortcuts
   useEffect(() => {
@@ -2711,10 +2733,16 @@ export default function SiteEditorPage() {
                           Open ↗
                         </a>
                       )}
+                      {/* Zoom indicator — only shown when scaled down */}
+                      {deviceView === "desktop" && previewScale < 0.99 && (
+                        <span className="text-[10px] text-gray-400 font-mono px-2 py-1 bg-gray-50 rounded border border-gray-200 select-none">
+                          {Math.round(previewScale * 100)}% · 1440px
+                        </span>
+                      )}
                     </div>
                   </div>
                   {/* Device frame + iframe */}
-                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center relative">
+                  <div ref={previewContainerRef} className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center relative">
                     {/* Image replace overlay */}
                     {selectedImg && (
                       <div className="absolute bottom-4 right-4 z-20 bg-white rounded-xl shadow-2xl border border-gray-200 w-72 overflow-hidden">
@@ -2817,14 +2845,26 @@ export default function SiteEditorPage() {
                     )}
 
                     {deviceView === "desktop" ? (
-                      <iframe
-                        ref={iframeRef}
-                        key={`${previewKey}-desktop-${locationPreview ?? ""}`}
-                        src={locationPreview ?? blobUrl ?? site.preview_url ?? ""}
-                        className="w-full h-full border-0 bg-white"
-                        style={{ minHeight: "100%" }}
-                        title="Site Preview"
-                      />
+                      /* Fixed 1440px width scaled to fit container — always renders at true desktop breakpoint */
+                      <div
+                        style={{
+                          width: PREVIEW_WIDTHS.desktop,
+                          transformOrigin: "top left",
+                          transform: `scale(${previewScale})`,
+                          // Compensate height so container doesn't scroll past content
+                          height: previewScale < 1 ? `${100 / previewScale}%` : "100%",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <iframe
+                          ref={iframeRef}
+                          key={`${previewKey}-desktop-${locationPreview ?? ""}`}
+                          src={locationPreview ?? blobUrl ?? site.preview_url ?? ""}
+                          className="border-0 bg-white"
+                          style={{ width: PREVIEW_WIDTHS.desktop, height: "100%", minHeight: "100%", display: "block" }}
+                          title="Site Preview"
+                        />
+                      </div>
                     ) : (
                       <div
                         className="my-4 shrink-0 relative"
