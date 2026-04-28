@@ -1524,11 +1524,54 @@ export default function SiteEditorPage() {
     const res = await fetch(`/api/sites/${siteId}/domain`);
     const data = await res.json();
     setLastChecked(new Date());
+
+    if (data.status === "none") return; // no domain set up
+
     if (data.status === "active") {
       if (domainPollRef.current) { clearInterval(domainPollRef.current); domainPollRef.current = null; }
       setDomainStatus("active");
+      if (data.liveUrl) setActiveDomain(data.liveUrl.replace("https://", ""));
       await fetchSite();
+      return;
     }
+
+    // Restore pending state — domain is set up but DNS not yet propagated
+    if (data.domain) {
+      setActiveDomain(data.domain);
+      if (data.apexDomain) setApexDomain(data.apexDomain);
+    }
+    if (data.mode === "entri") {
+      setDomainStatus("entri_pending");
+      // Restore Entri connect URL from session if available
+      if (data.entriStatus?.connectUrl) setEntriConnectUrl(data.entriStatus.connectUrl);
+      startDomainPolling();
+    } else if (data.mode === "manual") {
+      setDomainStatus("manual_pending");
+      // Reconstruct the manual records from siteId + domain (they're deterministic)
+      if (data.apexDomain) {
+        setManualRecords({
+          www: { type: "CNAME", host: "www", value: `${siteId}.pages.dev`, ttl: "Auto", proxied: false, note: "Do NOT enable Cloudflare proxy (orange cloud) if your domain is on Cloudflare" },
+          apex: { type: "URL Redirect", host: "@", value: `https://www.${data.apexDomain}`, note: "" },
+        });
+      }
+      startDomainPolling();
+    }
+  }
+
+  // Restore domain state on mount from server
+  async function loadDomainState() {
+    try {
+      // First check if site is already live via site record
+      const siteRes = await fetch(`/api/sites/${siteId}?page=${currentPage}`);
+      const siteData = await siteRes.json();
+      if (siteData.site?.status === "live" && siteData.site?.live_url) {
+        setDomainStatus("active");
+        setActiveDomain(siteData.site.live_url.replace("https://", ""));
+        return;
+      }
+      // Otherwise check domain API for pending state
+      await checkDomainStatus();
+    } catch { /* non-fatal */ }
   }
 
   async function handleAddDomain() {
@@ -1589,6 +1632,7 @@ export default function SiteEditorPage() {
     fetchVersions();
     fetchPages();
     fetchDomains();
+    loadDomainState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
@@ -3049,7 +3093,7 @@ export default function SiteEditorPage() {
                   : "text-gray-400 hover:text-gray-600 border-b-2 border-transparent"
               }`}
             >
-              {tab}
+              {tab === "golive" ? "Go Live" : tab}
               {tab === "deployments" && deployments.length > 0 && (
                 <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${bottomTab === "deployments" ? "bg-zing-teal/10 text-zing-teal" : "bg-gray-100 text-gray-500"}`}>{deployments.length}</span>
               )}
