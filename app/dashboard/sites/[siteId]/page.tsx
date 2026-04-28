@@ -1531,6 +1531,14 @@ export default function SiteEditorPage() {
 
     if (data.status === "none") return; // no domain set up
 
+    // CF registration failed / orphaned — surface as error with clear message
+    if (data.cfNotFound || data.status === "not_registered") {
+      if (domainPollRef.current) { clearInterval(domainPollRef.current); domainPollRef.current = null; }
+      setDomainStatus("error");
+      setDomainError("Cloudflare couldn't find this domain registration. This can happen if a previous attempt partially failed. Click \"Remove Domain\" below and try again.");
+      return;
+    }
+
     if (data.status === "active") {
       if (domainPollRef.current) { clearInterval(domainPollRef.current); domainPollRef.current = null; }
       setDomainStatus("active");
@@ -3400,6 +3408,23 @@ export default function SiteEditorPage() {
                   <button onClick={handleRemoveDomain} disabled={removingDomain}
                     className="w-full text-xs text-red-500 hover:text-red-700 disabled:opacity-50 py-1">
                     {removingDomain ? "Removing..." : "Remove Domain"}
+                  </button>
+                </div>
+              )}
+
+              {/* State: Error */}
+              {domainStatus === "error" && (
+                <div className="space-y-3">
+                  <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                    <p className="text-xs font-semibold text-red-800 mb-1">⚠️ Domain Registration Failed</p>
+                    <p className="text-xs text-red-700">{domainError ?? "An error occurred with Cloudflare."}</p>
+                  </div>
+                  <button
+                    onClick={handleRemoveDomain}
+                    disabled={removingDomain}
+                    className="w-full bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-xs font-medium hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {removingDomain ? "Clearing..." : "Clear & Start Over"}
                   </button>
                 </div>
               )}

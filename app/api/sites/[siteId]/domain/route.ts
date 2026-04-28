@@ -154,9 +154,16 @@ export async function GET(
 
   // Check CF Pages domain status
   let cfStatus = "unknown";
+  let cfNotFound = false;
   try {
     const cfResult = await getCfPagesCustomDomainStatus(siteId, publishingDomain);
-    cfStatus = cfResult?.status ?? "unknown";
+    if (cfResult === null) {
+      // CF can't find this domain — likely orphaned (CF bug) or registration failed silently
+      cfNotFound = true;
+      cfStatus = "not_registered";
+    } else {
+      cfStatus = cfResult.status;
+    }
   } catch {
     cfStatus = "error";
   }
@@ -187,6 +194,7 @@ export async function GET(
     domain: publishingDomain,
     apexDomain: payload.publishing_apex,
     entriStatus,
+    cfNotFound, // true = domain not found in CF Pages (orphaned / registration failed)
   });
 }
 

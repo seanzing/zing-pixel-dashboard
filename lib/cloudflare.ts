@@ -73,9 +73,14 @@ export async function addCfPagesCustomDomain(
   }
 
   if (res.status === 409) {
-    // Fetch current status instead
+    // Domain already exists — fetch current status to verify it's actually there
     const current = await getCfPagesCustomDomainStatus(projectName, domain);
-    return current ?? { domain, status: "initializing" };
+    if (!current) {
+      // CF says "already added" but can't find it — orphaned domain state (CF bug)
+      // Throw so the caller surfaces a real error rather than silently writing to Supabase
+      throw new Error(`Domain ${domain} appears to be stuck in Cloudflare. Please remove it via the CF Dashboard (Pages → ${projectName} → Custom Domains) and try again, or contact support.`);
+    }
+    return current;
   }
 
   return { domain: data.result?.name ?? domain, status: data.result?.status ?? "initializing" };
