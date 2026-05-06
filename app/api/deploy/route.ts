@@ -51,6 +51,40 @@ export async function POST(request: Request) {
         .eq("id", siteId);
     }
 
+    // Notify Atlas when site goes live
+    if (type === "production") {
+      const atlasWebhookUrl = process.env.ATLAS_WEBHOOK_URL;
+      const atlasWebhookSecret = process.env.ATLAS_WEBHOOK_SECRET;
+
+      // Get atlas_onboarding_id from site record
+      const { data: siteRecord } = await supabase
+        .from("sites")
+        .select("atlas_onboarding_id")
+        .eq("id", siteId)
+        .single();
+
+      if (atlasWebhookUrl && atlasWebhookSecret && siteRecord?.atlas_onboarding_id) {
+        try {
+          await fetch(`${atlasWebhookUrl}/api/webhooks/pixel`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-webhook-secret": atlasWebhookSecret,
+            },
+            body: JSON.stringify({
+              event: "site_deployed_live",
+              siteId,
+              atlasOnboardingId: siteRecord.atlas_onboarding_id,
+              liveUrl: `https://${siteId}.pages.dev`,
+            }),
+          });
+        } catch {
+          // Non-fatal — deploy still succeeds even if Atlas webhook fails
+          console.error("Atlas webhook failed (non-fatal)");
+        }
+      }
+    }
+
     // Save deployment record
     await supabase.from("deployments").insert({
       site_id: siteId,

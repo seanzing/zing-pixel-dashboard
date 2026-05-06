@@ -68,6 +68,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
+  // Map camelCase fields from Atlas to snake_case
+  if (body.atlasOnboardingId !== undefined) {
+    body.atlas_onboarding_id = body.atlasOnboardingId;
+  }
+  if (body.businessName !== undefined) {
+    body.business_name = body.businessName;
+  }
+
   // Update Supabase
   const updateFields: Record<string, string> = {};
   const fieldKeys = [
@@ -81,6 +89,7 @@ export async function PATCH(
     "hero_subheadline",
     "cta_text",
     "status",
+    "atlas_onboarding_id",
   ];
 
   for (const key of fieldKeys) {
